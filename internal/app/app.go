@@ -2,7 +2,7 @@ package app
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 
 	"github.com/srcreigh/pxehost/internal/dhcp"
@@ -70,7 +70,7 @@ func (a *App) Start() error {
 		_ = a.tftps.Close()
 		return fmt.Errorf("proxydhcp start: %w", err)
 	}
-	log.Printf("Waiting for PXE clients on :%d and :%d (tftp=%s)", a.cfg.DHCPPort, a.cfg.ProxyDHCPPort, a.cfg.AdvertisedIP)
+	slog.Info("Waiting for PXE clients", "dhcp_port", a.cfg.DHCPPort, "pxe_port", a.cfg.ProxyDHCPPort, "tftp", a.cfg.AdvertisedIP)
 	return nil
 }
 

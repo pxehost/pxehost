@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net"
 	"path"
 	"strings"
@@ -30,8 +30,8 @@ type Server struct {
 	// Provider supplies bootfiles by name.
 	Provider BootfileProvider
 
-	// Logger is optional. If nil, the package-level log.Printf is used.
-	Logger *log.Logger
+	// Logger is optional. If nil, the default slog logger is used.
+	Logger *slog.Logger
 
 	conn   *net.UDPConn
 	nextID uint64
@@ -55,7 +55,7 @@ func (s *Server) StartAsync() error {
 		return fmt.Errorf("tftp: listen :%d: %w", s.Port, err)
 	}
 	s.conn = c
-	s.logf("listening on UDP :%d", s.Port)
+	s.logf(slog.LevelInfo, "listening on UDP :%d", s.Port)
 	go s.serve()
 	return nil
 }
@@ -78,7 +78,7 @@ func (s *Server) serve() {
 			if isNetClosed(err) {
 				return
 			}
-			s.logf("read error: %v", err)
+			s.logf(slog.LevelError, "read error: %v", err)
 			return
 		}
 		// Packet capture: inbound request to port 69
@@ -158,7 +158,7 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
 		return
 	}
 	if strings.ToLower(mode) != "octet" {
-		s.logf("sid=%d client=%s unsupported mode=%q for file=%q", sid, client.String(), mode, filename)
+		s.logf(slog.LevelWarn, "sid=%d client=%s unsupported mode=%q for file=%q", sid, client.String(), mode, filename)
 		s.sendError(client, 0, "only octet mode supported")
 		return
 	}
@@ -180,12 +180,12 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
 	// Sanitize path: avoid path traversal; use last element
 	cleanName := path.Base(strings.TrimLeft(filename, "/\\"))
 
-	s.logf("sid=%d client=%s rrq file=%q clean=%q mode=%s opts=%v", sid, client.String(), filename, cleanName, strings.ToLower(mode), opts)
+	s.logf(slog.LevelInfo, "sid=%d client=%s rrq file=%q clean=%q mode=%s opts=%v", sid, client.String(), filename, cleanName, strings.ToLower(mode), opts)
 
 	// Obtain bootfile from provider
 	body, size, err := s.Provider.GetBootfile(cleanName)
 	if err != nil {
-		s.logf("sid=%d provider fetch failed file=%q err=%v", sid, cleanName, err)
+		s.logf(slog.LevelError, "sid=%d provider fetch failed file=%q err=%v", sid, cleanName, err)
 		s.sendError(client, 1, "file not found")
 		return
 	}
@@ -196,14 +196,14 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
 	// Create session socket bound to ephemeral port
 	sessConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
 	if err != nil {
-		s.logf("sid=%d failed to open session socket: %v", sid, err)
+		s.logf(slog.LevelError, "sid=%d failed to open session socket: %v", sid, err)
 		s.sendError(client, 0, "internal error")
 		return
 	}
 	defer func() {
 		_ = sessConn.Close()
 	}()
-	s.logf("sid=%d session started laddr=%s raddr=%s size=%d", sid, sessConn.LocalAddr().String(), client.String(), size)
+	s.logf(slog.LevelInfo, "sid=%d session started laddr=%s raddr=%s size=%d", sid, sessConn.LocalAddr().String(), client.String(), size)
 
 	// Option negotiation: if client requested options, send OACK for tsize/blksize
 	// We fix blksize=512; if requested a different value, we still respond with 512.
@@ -216,10 +216,10 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
 			// echo blksize we can do (512)
 			oackMap["blksize"] = "512"
 		}
-		s.logf("sid=%d oack request opts=%v respond=%v", sid, opts, oackMap)
+		s.logf(slog.LevelDebug, "sid=%d oack request opts=%v respond=%v", sid, opts, oackMap)
 		oack := buildOACK(oackMap)
 		if err := sessConn.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
-			s.logf("sid=%d set write deadline (OACK) error: %v", sid, err)
+			s.logf(slog.LevelWarn, "sid=%d set write deadline (OACK) error: %v", sid, err)
 		}
 		if _, err := sessConn.WriteToUDP(oack, client); err == nil && s.PacketLog != nil {
 			lip := ""
@@ -240,15 +240,15 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
 		// Wait for ACK block 0
 		buf := make([]byte, 1500)
 		if err := sessConn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
-			s.logf("sid=%d set read deadline (OACK ACK wait) error: %v", sid, err)
+			s.logf(slog.LevelWarn, "sid=%d set read deadline (OACK ACK wait) error: %v", sid, err)
 		}
 		n, raddr, err := sessConn.ReadFromUDP(buf)
 		if err != nil || raddr == nil || !raddr.IP.Equal(client.IP) || raddr.Port != client.Port {
-			s.logf("sid=%d no ACK(0) after OACK from %s err=%v", sid, client.String(), err)
+			s.logf(slog.LevelDebug, "sid=%d no ACK(0) after OACK from %s err=%v", sid, client.String(), err)
 			// proceed anyway (some clients may accept data immediately)
 		} else if n >= 4 && (int(buf[0])<<8|int(buf[1])) == opACK && int(buf[2]) == 0 && int(buf[3]) == 0 {
 			// ok
-			s.logf("sid=%d received ACK(0) after OACK", sid)
+			s.logf(slog.LevelDebug, "sid=%d received ACK(0) after OACK", sid)
 			if s.PacketLog != nil {
 				lip := ""
 				lport := 0
@@ -285,7 +285,7 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
 		case nil:
 			// ok
 		default:
-			s.logf("sid=%d read error from upstream: %v", sid, rerr)
+			s.logf(slog.LevelError, "sid=%d read error from upstream: %v", sid, rerr)
 			s.sendError(client, 0, "read error")
 			return
 		}
@@ -302,10 +302,10 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
 		acked := false
 		for attempt := 0; attempt < maxRetry; attempt++ {
 			if err := sessConn.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
-				s.logf("sid=%d set write deadline (DATA) error: %v", sid, err)
+				s.logf(slog.LevelWarn, "sid=%d set write deadline (DATA) error: %v", sid, err)
 			}
 			if _, err := sessConn.WriteToUDP(pkt, client); err != nil {
-				s.logf("sid=%d write error to %s: %v", sid, client.String(), err)
+				s.logf(slog.LevelWarn, "sid=%d write error to %s: %v", sid, client.String(), err)
 				// retry on transient errors; next attempt will resend
 				continue
 			}
@@ -328,12 +328,12 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
 			// Wait for ACK
 			buf := make([]byte, 1500)
 			if err := sessConn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
-				s.logf("sid=%d set read deadline (ACK wait) error: %v", sid, err)
+				s.logf(slog.LevelWarn, "sid=%d set read deadline (ACK wait) error: %v", sid, err)
 			}
 			n, raddr, err := sessConn.ReadFromUDP(buf)
 			if err != nil {
 				if attempt+1 < maxRetry {
-					s.logf("sid=%d timeout waiting ACK for block=%d attempt=%d/%d", sid, blockNum, attempt+1, maxRetry)
+					s.logf(slog.LevelWarn, "sid=%d timeout waiting ACK for block=%d attempt=%d/%d", sid, blockNum, attempt+1, maxRetry)
 				}
 				// retry
 				continue
@@ -372,7 +372,7 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
 		}
 		if !acked {
 			// Give up on this transfer after max retries without ACK
-			s.logf("sid=%d no ACK for block=%d from %s after %d attempts; aborting session", sid, blockNum, client.String(), maxRetry)
+			s.logf(slog.LevelWarn, "sid=%d no ACK for block=%d from %s after %d attempts; aborting session", sid, blockNum, client.String(), maxRetry)
 			return
 		}
 
@@ -381,7 +381,7 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
 			total += int64(len(data))
 			dur := time.Since(start)
 			rate := float64(total) / dur.Seconds()
-			s.logf("sid=%d transfer complete bytes=%d blocks=%d duration=%s rate=%.0fB/s", sid, total, int(blockNum), dur.Truncate(time.Millisecond), rate)
+			s.logf(slog.LevelInfo, "sid=%d transfer complete bytes=%d blocks=%d duration=%s rate=%.0fB/s", sid, total, int(blockNum), dur.Truncate(time.Millisecond), rate)
 			return
 		}
 		total += int64(len(data))
@@ -403,7 +403,7 @@ func (s *Server) sendError(dst *net.UDPAddr, code int, msg string) {
 	b[3] = byte(code)
 	copy(b[4:], []byte(msg))
 	if err := s.conn.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
-		s.logf("set write deadline (ERROR pkt) error: %v", err)
+		s.logf(slog.LevelWarn, "set write deadline (ERROR pkt) error: %v", err)
 	}
 	if _, err := s.conn.WriteToUDP(b, dst); err == nil && s.PacketLog != nil {
 		lip := ""
@@ -421,7 +421,7 @@ func (s *Server) sendError(dst *net.UDPAddr, code int, msg string) {
 			append([]byte(nil), b...),
 		))
 	}
-	s.logf("sent ERROR to %s code=%d msg=%q", dst.String(), code, msg)
+	s.logf(slog.LevelInfo, "sent ERROR to %s code=%d msg=%q", dst.String(), code, msg)
 }
 
 func buildOACK(kv map[string]string) []byte {
@@ -438,13 +438,23 @@ func buildOACK(kv map[string]string) []byte {
 }
 
 // logf logs via the server's Logger if provided, else the package logger.
-func (s *Server) logf(format string, args ...any) {
+func (s *Server) logf(level slog.Level, format string, args ...any) {
 	if s == nil {
 		return
 	}
-	if s.Logger != nil {
-		s.Logger.Printf("TFTP: "+format, args...)
-		return
+	logger := s.Logger
+	if logger == nil {
+		logger = slog.Default()
 	}
-	log.Printf("TFTP: "+format, args...)
+	msg := fmt.Sprintf("TFTP: "+format, args...)
+	switch level {
+	case slog.LevelDebug:
+		logger.Debug(msg)
+	case slog.LevelWarn:
+		logger.Warn(msg)
+	case slog.LevelError:
+		logger.Error(msg)
+	default:
+		logger.Info(msg)
+	}
 }

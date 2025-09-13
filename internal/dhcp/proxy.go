@@ -5,7 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"strings"
 	"syscall"
@@ -110,7 +110,7 @@ func (p *ProxyDHCP) StartAsync() error {
 		})
 	}
 
-	log.Printf("ProxyDHCP: listening on UDP :%d and :%d (TFTP=%s)", dhcpPort, pxePort, p.TFTPServerIP)
+	slog.Info("ProxyDHCP listening", "dhcp_port", dhcpPort, "pxe_port", pxePort, "tftp", p.TFTPServerIP)
 	go p.serve(p.conn, dhcpPort)
 	go p.serve(p.conn4011, pxePort)
 	return nil
@@ -142,10 +142,10 @@ func (p *ProxyDHCP) serve(conn *net.UDPConn, port int) {
 			if isNetClosed(err) {
 				return
 			}
-			log.Printf("ProxyDHCP read error: %v", err)
+			slog.Error("ProxyDHCP read error", "err", err)
 			return
 		}
-		log.Printf("ProxyDHCP:%d received %d bytes from %s", port, n, raddr.String())
+		slog.Debug("ProxyDHCP packet received", "port", port, "bytes", n, "from", raddr.String())
 		// Packet capture: inbound packet
 		if p.PacketLog != nil {
 			lip := ""
@@ -187,7 +187,7 @@ func isNetClosed(err error) bool {
 func (p *ProxyDHCP) handle(conn *net.UDPConn, req []byte, src *net.UDPAddr, port int) {
 	// Minimal DHCP parse: ensure BOOTP and cookie present, echo xid and chaddr.
 	if len(req) < dhcpFixedHeaderLen || !bytes.Equal(req[dhcpCookieOffset:dhcpCookieOffset+4], dhcpMagicCookie[:]) {
-		log.Printf("ProxyDHCP:%d: ignoring non-DHCP/invalid packet from %s (len=%d)", port, src.String(), len(req))
+		slog.Debug("ProxyDHCP ignoring non-DHCP/invalid packet", "port", port, "from", src.String(), "len", len(req))
 		return
 	}
 	// Only respond to PXE clients when vendor class contains "PXEClient".
@@ -195,13 +195,13 @@ func (p *ProxyDHCP) handle(conn *net.UDPConn, req []byte, src *net.UDPAddr, port
 	opts := parseOptions(req[240:])
 	// Log all incoming options in a readable way
 	if len(opts) > 0 {
-		log.Printf("ProxyDHCP:%d: incoming options from %s:\n%s", port, src.String(), formatDHCPOptions(opts))
+		slog.Debug("ProxyDHCP incoming options", "port", port, "from", src.String(), "options", "\n"+formatDHCPOptions(opts))
 	}
 	if v, ok := opts[optVendorClassID]; ok && containsString(v, "PXEClient") {
 		isPXE = true
 	}
 	if !isPXE {
-		log.Printf("ProxyDHCP:%d: DHCP packet from %s is not PXEClient; ignoring", port, src.String())
+		slog.Debug("ProxyDHCP non-PXEClient; ignoring", "port", port, "from", src.String())
 		return
 	}
 
@@ -289,7 +289,7 @@ func (p *ProxyDHCP) handle(conn *net.UDPConn, req []byte, src *net.UDPAddr, port
 	// Log outgoing options in a readable way
 	if len(opt) > 0 {
 		outOpts := parseOptions(opt)
-		log.Printf("ProxyDHCP:%d: outgoing options to %s:\n%s", port, src.String(), formatDHCPOptions(outOpts))
+		slog.Debug("ProxyDHCP outgoing options", "port", port, "to", src.String(), "options", "\n"+formatDHCPOptions(outOpts))
 	}
 
 	// Decide reply destination: broadcast if client has no IP or requests broadcast
@@ -306,15 +306,20 @@ func (p *ProxyDHCP) handle(conn *net.UDPConn, req []byte, src *net.UDPAddr, port
 	}
 	// Send reply
 	if err := conn.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
-		log.Printf("ProxyDHCP:%d: set write deadline error: %v", port, err)
+		slog.Warn("ProxyDHCP set write deadline error", "port", port, "err", err)
 	}
 	if n, err := conn.WriteToUDP(resp, dst); err != nil {
-		log.Printf("ProxyDHCP write: %v", err)
+		slog.Error("ProxyDHCP write error", "err", err)
 	} else {
 		// Include next-server (siaddr / option 66) for visibility
-		log.Printf(
-			"ProxyDHCP:%d: sent %d-byte reply to %s (type=%d arch=0x%04x next-server=%s boot=%s)",
-			port, n, dst.String(), respMsgType, arch, p.TFTPServerIP, bootfile,
+		slog.Info("ProxyDHCP reply sent",
+			"port", port,
+			"bytes", n,
+			"to", dst.String(),
+			"type", respMsgType,
+			"arch", fmt.Sprintf("0x%04x", arch),
+			"next_server", p.TFTPServerIP,
+			"boot", bootfile,
 		)
 		// Packet capture: outbound reply
 		if p.PacketLog != nil {

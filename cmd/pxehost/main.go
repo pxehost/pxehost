@@ -2,26 +2,29 @@ package main
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/srcreigh/pxehost/internal/app"
+	"github.com/srcreigh/pxehost/internal/logging"
 	"github.com/srcreigh/pxehost/internal/tftp"
 )
 
 func main() {
+	// Configure slog default with pretty colorized formatter and source trimming.
+	slog.SetDefault(slog.New(logging.NewPrettyHandler(os.Stderr, &slog.HandlerOptions{AddSource: true})))
 	// Discover LAN IP to advertise to PXE clients.
 	lanIP := ""
 	if ip, err := outboundIP(); err == nil {
 		lanIP = ip.String()
 	} else {
-		log.Printf("Error detecting outbound IP: %v", err)
+		slog.Error("Error detecting outbound IP", "err", err)
 		os.Exit(1)
 	}
-	log.Printf("Detected outbound IP: %s", lanIP)
+	slog.Info("Detected outbound IP", "ip", lanIP)
 
 	// Default bootfile provider: HTTP upstream
 	provider := tftp.NewHTTPProvider("https://boot.netboot.xyz/ipxe/")
@@ -37,7 +40,7 @@ func main() {
 
 	a := app.New(cfg)
 	if err := a.Start(); err != nil {
-		log.Printf("failed to start services: %v", err)
+		slog.Error("failed to start services", "err", err)
 		os.Exit(1)
 	}
 
@@ -45,7 +48,7 @@ func main() {
 	sigc := make(chan os.Signal, 1)
 	signal.Notify(sigc, syscall.SIGINT, syscall.SIGTERM)
 	<-sigc
-	log.Printf("shutting down...")
+	slog.Info("shutting down...")
 	a.Stop()
 }
 
