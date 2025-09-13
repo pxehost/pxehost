@@ -9,3 +9,9 @@ macos-pxe-boot:
 
 clean:
 	rm -f macos-pxe-boot
+
+format:
+	./scripts/format.sh
+
+lint:
+	./scripts/lint.sh
