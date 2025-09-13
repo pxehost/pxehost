@@ -1,6 +1,7 @@
 package dhcp
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"log"
@@ -131,12 +132,23 @@ func (p *ProxyDHCP) handle(conn *net.UDPConn, req []byte, src *net.UDPAddr, port
 		arch = uint16(v[0])<<8 | uint16(v[1])
 	}
 
-	// Choose bootfile based on arch
-	// 0 = Intel x86PC (BIOS);
-	// 7,9 = EFI x86 32/64; many use 9 for x86-64
-	bootfile := "netboot.xyz.efi"
-	if arch == 0x0000 {
-		bootfile = "undionly.kpxe"
+	// First stage - PXE BIOS firmware needs the .efi/.kpxe TFTP bootfile
+	// Second stage - iPXE (HTTP-capable) firmware gets HTTPS link to menu.ipxe
+	bootfile := ""
+	// If client identifies as iPXE via Option 77 (User Class),
+	// provide an iPXE script URL over HTTPS instead of TFTP bootfile.
+	if uc, ok := opts[77]; ok && bytes.Contains(uc, []byte("iPXE")) {
+		bootfile = "https://boot.netboot.xyz/menu.ipxe"
+	} else {
+		// PXE BIOS step -- need to specify TFTP filename.
+		// Choose bootfile based on arch.
+		// 0 = Intel x86PC (BIOS);
+		// 7,9 = EFI x86 32/64; many use 9 for x86-64
+		bootfile = "netboot.xyz.efi"
+		if arch == 0x0000 {
+			// For BIOS clients, use the netboot.xyz iPXE chainloader
+			bootfile = "netboot.xyz.kpxe"
+		}
 	}
 
 	// Build BOOTREPLY (op=2) with DHCP OFFER/ACK and options 60,66,67.
@@ -205,7 +217,11 @@ func (p *ProxyDHCP) handle(conn *net.UDPConn, req []byte, src *net.UDPAddr, port
 	if n, err := conn.WriteToUDP(resp, dst); err != nil {
 		log.Printf("ProxyDHCP write: %v", err)
 	} else {
-		log.Printf("ProxyDHCP:%d: sent %d-byte reply to %s (type=%d arch=0x%04x boot=%s)", port, n, dst.String(), respMsgType, arch, bootfile)
+		// Include next-server (siaddr / option 66) for visibility
+		log.Printf(
+			"ProxyDHCP:%d: sent %d-byte reply to %s (type=%d arch=0x%04x next-server=%s boot=%s)",
+			port, n, dst.String(), respMsgType, arch, p.TFTPServerIP, bootfile,
+		)
 	}
 }
 
@@ -253,37 +269,37 @@ func formatDHCPOptions(m map[byte][]byte) string {
 			j--
 		}
 	}
-    const maxOptionLogChars = 100
-    var out string
-    for _, ik := range keys {
-        k := byte(ik)
-        v := m[k]
-        name := dhcpOptionName(k)
-        decoded := decodeDHCPOption(k, v)
-        line := fmt.Sprintf("  - %s (%d): %s | hex=%s", name, k, decoded, hexBytes(v))
-        out += truncateString(line, maxOptionLogChars) + "\n"
-    }
-    return out
+	const maxOptionLogChars = 100
+	var out string
+	for _, ik := range keys {
+		k := byte(ik)
+		v := m[k]
+		name := dhcpOptionName(k)
+		decoded := decodeDHCPOption(k, v)
+		line := fmt.Sprintf("  - %s (%d): %s | hex=%s", name, k, decoded, hexBytes(v))
+		out += truncateString(line, maxOptionLogChars) + "\n"
+	}
+	return out
 }
 
 // truncateString returns s limited to max characters; adds an ellipsis when truncated.
 func truncateString(s string, max int) string {
-    if max <= 0 || len(s) <= max {
-        return s
-    }
-    // Ensure we do not split in the middle of a multi-byte rune.
-    // Walk back to the start of the last full rune if needed.
-    // For speed, assume most content is ASCII; only adjust if necessary.
-    end := max
-    for end > 0 && (s[end]&0xC0) == 0x80 { // continuation byte 10xxxxxx
-        end--
-    }
-    // Add a compact truncation marker to indicate omitted length
-    omitted := len([]rune(s[end:]))
-    if omitted > 0 {
-        return s[:end] + fmt.Sprintf("…(+%d)", omitted)
-    }
-    return s[:end] + "…"
+	if max <= 0 || len(s) <= max {
+		return s
+	}
+	// Ensure we do not split in the middle of a multi-byte rune.
+	// Walk back to the start of the last full rune if needed.
+	// For speed, assume most content is ASCII; only adjust if necessary.
+	end := max
+	for end > 0 && (s[end]&0xC0) == 0x80 { // continuation byte 10xxxxxx
+		end--
+	}
+	// Add a compact truncation marker to indicate omitted length
+	omitted := len([]rune(s[end:]))
+	if omitted > 0 {
+		return s[:end] + fmt.Sprintf("…(+%d)", omitted)
+	}
+	return s[:end] + "…"
 }
 
 func dhcpOptionName(code byte) string {

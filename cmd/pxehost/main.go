@@ -1,23 +1,19 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
-	"github.com/shanebo/macos-pxe-boot/internal/assets"
 	"github.com/shanebo/macos-pxe-boot/internal/dhcp"
 	"github.com/shanebo/macos-pxe-boot/internal/netutil"
-	"github.com/shanebo/macos-pxe-boot/internal/setup"
+	"github.com/shanebo/macos-pxe-boot/internal/tftp"
 )
 
 func main() {
 	log.SetFlags(0)
-	dataDir := "/private/tftpboot"
 
 	// Require root to bind privileged UDP/67 and receive broadcast traffic
 	if os.Geteuid() != 0 {
@@ -43,13 +39,8 @@ func main() {
 	okRouter := routerIP != ""
 	printCheck(okRouter, fmt.Sprintf("Router detected: %s", emptyDash(routerIP)))
 
-	// tftpd readiness
-	readiness := setup.CheckTFTPD(dataDir)
-	okTFTPD := readiness.Ready
-	printCheck(okTFTPD, "tftpd ready and /private/tftpboot usable")
-
 	fmt.Println()
-	if !okLAN || !okTFTPD {
+	if !okLAN {
 		allOK = false
 	}
 
@@ -60,18 +51,16 @@ func main() {
 			fmt.Println()
 			fmt.Println("Ensure your Mac is connected to a LAN with IPv4 and try again.")
 		}
-		if !okTFTPD {
-			setup.PrintTFTPDRemediation(readiness)
-		}
 		os.Exit(1)
 	}
 
-	// Download assets into tftpd root when possible
-	if readiness.DirExists && readiness.DirWritable {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		defer cancel()
-		if err := assets.EnsureNetbootAssets(ctx, dataDir); err != nil {
-			log.Printf("warning: failed to download netboot.xyz assets to %s: %v", dataDir, err)
+	// Start internal TFTP proxy server (UDP/69) that fetches from netboot.xyz
+	var tftps *tftp.Server
+	{
+		tftps = &tftp.Server{UpstreamBase: "https://boot.netboot.xyz/ipxe/"}
+		if err := tftps.StartAsync(); err != nil {
+			log.Printf("error: TFTP server not started: %v", err)
+			os.Exit(1)
 		}
 	}
 
@@ -96,6 +85,8 @@ func main() {
 	signal.Notify(sigc, syscall.SIGINT, syscall.SIGTERM)
 	<-sigc
 	log.Printf("shutting down...")
+	_ = proxy.Close()
+	_ = tftps.Close()
 }
 
 func printHeader(title string) {
