@@ -54,35 +54,40 @@ const (
 var dhcpMagicCookie = [4]byte{99, 130, 83, 99}
 
 // ProxyDHCP is a minimal ProxyDHCP responder (PXE Boot Server Discovery).
-// It binds to UDP ports 67 and 4011 and advertises TFTP server and bootfile
+// It binds to UDP ports and advertises TFTP server and bootfile
 // to PXE clients without assigning IPs.
 type ProxyDHCP struct {
-	TFTPServerIP string // IP string advertised in option 66 and siaddr
+	TFTPServerIP string
 
 	conn     *net.UDPConn
-	conn4011 *net.UDPConn // listener for PXE service port 4011
+	conn4011 *net.UDPConn
+
+	DHCPPort int // canonically 67
+	PXEPort  int // canonically 4011
 }
 
 func (p *ProxyDHCP) StartAsync() error {
-	// Bind IPv4-only to receive IPv4 DHCP broadcasts on :67
-	addr67, err := net.ResolveUDPAddr("udp4", ":67")
+	dhcpPort := p.DHCPPort
+	pxePort := p.PXEPort
+	// Bind IPv4-only to receive IPv4 DHCP broadcasts
+	addr67, err := net.ResolveUDPAddr("udp4", ":"+itoa(dhcpPort))
 	if err != nil {
-		return fmt.Errorf("proxydhcp: resolve :67: %w", err)
+		return fmt.Errorf("proxydhcp: resolve :%d: %w", dhcpPort, err)
 	}
 	c67, err := net.ListenUDP("udp4", addr67)
 	if err != nil {
-		return fmt.Errorf("proxydhcp: listen :67: %w", err)
+		return fmt.Errorf("proxydhcp: listen :%d: %w", dhcpPort, err)
 	}
-	// Bind PXE service port :4011 (required)
-	addr4011, err := net.ResolveUDPAddr("udp4", ":4011")
+	// Bind PXE service port (required)
+	addr4011, err := net.ResolveUDPAddr("udp4", ":"+itoa(pxePort))
 	if err != nil {
 		_ = c67.Close()
-		return fmt.Errorf("proxydhcp: resolve :4011: %w", err)
+		return fmt.Errorf("proxydhcp: resolve :%d: %w", pxePort, err)
 	}
 	c4011, err := net.ListenUDP("udp4", addr4011)
 	if err != nil {
 		_ = c67.Close()
-		return fmt.Errorf("proxydhcp: listen :4011: %w", err)
+		return fmt.Errorf("proxydhcp: listen :%d: %w", pxePort, err)
 	}
 
 	p.conn = c67
@@ -100,9 +105,9 @@ func (p *ProxyDHCP) StartAsync() error {
 		})
 	}
 
-	log.Printf("ProxyDHCP: listening on UDP :67 and :4011 (TFTP=%s)", p.TFTPServerIP)
-	go p.serve(p.conn, 67)
-	go p.serve(p.conn4011, 4011)
+	log.Printf("ProxyDHCP: listening on UDP :%d and :%d (TFTP=%s)", dhcpPort, pxePort, p.TFTPServerIP)
+	go p.serve(p.conn, dhcpPort)
+	go p.serve(p.conn4011, pxePort)
 	return nil
 }
 
@@ -115,10 +120,10 @@ func (p *ProxyDHCP) Close() error {
 		err2 = p.conn4011.Close()
 	}
 	if err1 != nil {
-		return fmt.Errorf("proxydhcp: close :67: %w", err1)
+		return fmt.Errorf("proxydhcp: close DHCP socket: %w", err1)
 	}
 	if err2 != nil {
-		return fmt.Errorf("proxydhcp: close :4011: %w", err2)
+		return fmt.Errorf("proxydhcp: close PXE socket: %w", err2)
 	}
 	return nil
 }

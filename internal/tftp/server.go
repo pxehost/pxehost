@@ -37,6 +37,8 @@ type Server struct {
 
 	conn   *net.UDPConn
 	nextID uint64
+
+	Port int
 }
 
 func (s *Server) StartAsync() error {
@@ -47,16 +49,16 @@ func (s *Server) StartAsync() error {
 	if !strings.HasSuffix(s.UpstreamBase, "/") {
 		s.UpstreamBase += "/"
 	}
-	addr, err := net.ResolveUDPAddr("udp4", ":69")
+	addr, err := net.ResolveUDPAddr("udp4", fmt.Sprintf(":%d", s.Port))
 	if err != nil {
-		return fmt.Errorf("tftp: resolve :69: %w", err)
+		return fmt.Errorf("tftp: resolve :%d: %w", s.Port, err)
 	}
 	c, err := net.ListenUDP("udp4", addr)
 	if err != nil {
-		return fmt.Errorf("tftp: listen :69: %w", err)
+		return fmt.Errorf("tftp: listen :%d: %w", s.Port, err)
 	}
 	s.conn = c
-	s.logf("listening on UDP :69, proxying to %s", s.UpstreamBase)
+	s.logf("listening on UDP :%d, proxying to %s", s.Port, s.UpstreamBase)
 	go s.serve()
 	return nil
 }

@@ -8,12 +8,19 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/shanebo/macos-pxe-boot/internal/config"
 	"github.com/shanebo/macos-pxe-boot/internal/dhcp"
 	"github.com/shanebo/macos-pxe-boot/internal/tftp"
 )
 
 func main() {
 	log.SetFlags(0)
+
+	cfg := config.New(
+		config.WithDHCPPort(67),
+		config.WithPXEPort(4011),
+		config.WithTFTPPort(69),
+	)
 
 	// Require root to bind privileged UDP/67 and receive broadcast traffic
 	if os.Geteuid() != 0 {
@@ -32,25 +39,25 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Start internal TFTP proxy server (UDP/69) that fetches from netboot.xyz
+	// Start internal TFTP proxy server that fetches bootfiles from netboot.xyz
 	var tftps *tftp.Server
 	{
-		tftps = &tftp.Server{UpstreamBase: "https://boot.netboot.xyz/ipxe/"}
+		tftps = &tftp.Server{UpstreamBase: "https://boot.netboot.xyz/ipxe/", Port: cfg.TFTPPort}
 		if err := tftps.StartAsync(); err != nil {
 			log.Printf("error: TFTP server not started: %v", err)
 			os.Exit(1)
 		}
 	}
 
-	// Start ProxyDHCP on UDP/67 and :4011 — selects bootfile by arch
+	// Start ProxyDHCP — listens for PXE clients and responds with TFTP server and bootfile
 	var proxy *dhcp.ProxyDHCP
 	{
-		proxy = &dhcp.ProxyDHCP{TFTPServerIP: lanIP}
+		proxy = &dhcp.ProxyDHCP{TFTPServerIP: lanIP, DHCPPort: cfg.DHCPPort, PXEPort: cfg.ProxyDHCPPort}
 		if err := proxy.StartAsync(); err != nil {
 			log.Printf("error: ProxyDHCP not started: %v", err)
 			os.Exit(1)
 		} else {
-			log.Printf("Waiting for PXE clients on :67 and :4011 (tftp=%s)", lanIP)
+			log.Printf("Waiting for PXE clients on :%d and :%d (tftp=%s)", cfg.DHCPPort, cfg.ProxyDHCPPort, lanIP)
 		}
 	}
 
