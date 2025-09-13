@@ -253,15 +253,37 @@ func formatDHCPOptions(m map[byte][]byte) string {
 			j--
 		}
 	}
-	var out string
-	for _, ik := range keys {
-		k := byte(ik)
-		v := m[k]
-		name := dhcpOptionName(k)
-		decoded := decodeDHCPOption(k, v)
-		out += fmt.Sprintf("  - %s (%d): %s | hex=%s\n", name, k, decoded, hexBytes(v))
-	}
-	return out
+    const maxOptionLogChars = 100
+    var out string
+    for _, ik := range keys {
+        k := byte(ik)
+        v := m[k]
+        name := dhcpOptionName(k)
+        decoded := decodeDHCPOption(k, v)
+        line := fmt.Sprintf("  - %s (%d): %s | hex=%s", name, k, decoded, hexBytes(v))
+        out += truncateString(line, maxOptionLogChars) + "\n"
+    }
+    return out
+}
+
+// truncateString returns s limited to max characters; adds an ellipsis when truncated.
+func truncateString(s string, max int) string {
+    if max <= 0 || len(s) <= max {
+        return s
+    }
+    // Ensure we do not split in the middle of a multi-byte rune.
+    // Walk back to the start of the last full rune if needed.
+    // For speed, assume most content is ASCII; only adjust if necessary.
+    end := max
+    for end > 0 && (s[end]&0xC0) == 0x80 { // continuation byte 10xxxxxx
+        end--
+    }
+    // Add a compact truncation marker to indicate omitted length
+    omitted := len([]rune(s[end:]))
+    if omitted > 0 {
+        return s[:end] + fmt.Sprintf("…(+%d)", omitted)
+    }
+    return s[:end] + "…"
 }
 
 func dhcpOptionName(code byte) string {
