@@ -2,10 +2,12 @@ package dhcp
 
 import (
 	"bytes"
+	"errors"
 	"encoding/binary"
 	"fmt"
 	"log"
 	"net"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -78,18 +80,37 @@ func (p *ProxyDHCP) Close() error {
 }
 
 func (p *ProxyDHCP) serve(conn *net.UDPConn, port int) {
-	buf := make([]byte, 1500)
-	for {
-		n, raddr, err := conn.ReadFromUDP(buf)
-		if err != nil {
-			log.Printf("ProxyDHCP read error: %v", err)
-			return
-		}
-		log.Printf("ProxyDHCP:%d received %d bytes from %s", port, n, raddr.String())
-		pkt := make([]byte, n)
-		copy(pkt, buf[:n])
-		go p.handle(conn, pkt, raddr, port)
-	}
+    buf := make([]byte, 1500)
+    for {
+        n, raddr, err := conn.ReadFromUDP(buf)
+        if err != nil {
+            // Suppress expected errors on shutdown when the socket is closed.
+            if isNetClosed(err) {
+                return
+            }
+            log.Printf("ProxyDHCP read error: %v", err)
+            return
+        }
+        log.Printf("ProxyDHCP:%d received %d bytes from %s", port, n, raddr.String())
+        pkt := make([]byte, n)
+        copy(pkt, buf[:n])
+        go p.handle(conn, pkt, raddr, port)
+    }
+}
+
+// isNetClosed reports whether err indicates the UDP socket was closed
+// (e.g. during shutdown). It checks errors.Is against net.ErrClosed and
+// also matches the common substring used by the Go net package.
+func isNetClosed(err error) bool {
+    if err == nil {
+        return false
+    }
+    if errors.Is(err, net.ErrClosed) {
+        return true
+    }
+    // Fallback string match used by Go for closed connections.
+    // This keeps shutdown logs clean across Go versions/platforms.
+    return strings.Contains(err.Error(), "use of closed network connection")
 }
 
 func (p *ProxyDHCP) handle(conn *net.UDPConn, req []byte, src *net.UDPAddr, port int) {

@@ -73,6 +73,10 @@ func (s *Server) serve() {
     for {
         n, raddr, err := s.conn.ReadFromUDP(buf)
         if err != nil {
+            // Suppress expected errors when the socket is closed on shutdown.
+            if isNetClosed(err) {
+                return
+            }
             s.logf("read error: %v", err)
             return
         }
@@ -81,6 +85,17 @@ func (s *Server) serve() {
         copy(pkt, buf[:n])
         go s.handleRRQ(pkt, raddr)
     }
+}
+
+// isNetClosed reports whether err indicates the UDP socket was closed.
+func isNetClosed(err error) bool {
+    if err == nil {
+        return false
+    }
+    if errors.Is(err, net.ErrClosed) {
+        return true
+    }
+    return strings.Contains(err.Error(), "use of closed network connection")
 }
 
 const (

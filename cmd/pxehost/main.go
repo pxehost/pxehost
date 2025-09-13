@@ -22,29 +22,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Detect LAN IP and interface
+	// Detect LAN IP (used to advertise TFTP server); continue regardless
 	lanIP, iface := netutil.DetectLANIPv4()
-
-	// Checklist and gating before starting ProxyDHCP
-	allOK := true
-	printHeader("Startup Checklist")
-
-	okLAN := lanIP != "" && iface != ""
-	printCheck(okLAN, fmt.Sprintf("LAN address: %s (iface: %s)", emptyDash(lanIP), emptyDash(iface)))
-	if !okLAN {
-		allOK = false
-	}
-
-	fmt.Println()
-
-	if !allOK {
-		fmt.Println()
-		fmt.Println("Remediation:")
-		if !okLAN {
-			fmt.Println()
-			fmt.Println("Ensure your Mac is connected to a LAN with IPv4 and try again.")
+	if lanIP != "" {
+		if iface != "" {
+			log.Printf("Detected LAN IP: %s (iface=%s)", lanIP, iface)
+		} else {
+			log.Printf("Detected LAN IP: %s", lanIP)
 		}
-		os.Exit(1)
+	} else {
+		log.Printf("No LAN IP detected; will advertise 127.0.0.1 for TFTP")
 	}
 
 	// Start internal TFTP proxy server (UDP/69) that fetches from netboot.xyz
@@ -69,7 +56,7 @@ func main() {
 			log.Printf("error: ProxyDHCP not started: %v", err)
 			os.Exit(1)
 		} else {
-			log.Printf("All checks passed. Waiting for PXE clients on :67 and :4011 (tftp=%s)", advIP)
+			log.Printf("Waiting for PXE clients on :67 and :4011 (tftp=%s)", advIP)
 		}
 	}
 
@@ -80,27 +67,4 @@ func main() {
 	log.Printf("shutting down...")
 	_ = proxy.Close()
 	_ = tftps.Close()
-}
-
-func printHeader(title string) {
-	fmt.Println(title)
-	fmt.Println("-----------------")
-}
-
-func printCheck(ok bool, line string) {
-	if ok {
-		fmt.Printf("%s %s\n", green("✓"), line)
-	} else {
-		fmt.Printf("%s %s\n", red("✗"), line)
-	}
-}
-
-func green(s string) string { return "\x1b[32m" + s + "\x1b[0m" }
-func red(s string) string   { return "\x1b[31m" + s + "\x1b[0m" }
-
-func emptyDash(s string) string {
-	if s == "" {
-		return "-"
-	}
-	return s
 }
