@@ -8,57 +8,33 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/shanebo/macos-pxe-boot/internal/config"
-	"github.com/shanebo/macos-pxe-boot/internal/dhcp"
-	"github.com/shanebo/macos-pxe-boot/internal/tftp"
+	"github.com/shanebo/macos-pxe-boot/internal/app"
 )
 
 func main() {
-	log.SetFlags(0)
+	// Discover LAN IP to advertise to PXE clients.
+	lanIP := ""
+	if ip, err := outboundIP(); err == nil {
+		lanIP = ip.String()
+	} else {
+		log.Printf("Error detecting outbound IP: %v", err)
+		os.Exit(1)
+	}
+	log.Printf("Detected outbound IP: %s", lanIP)
 
-	cfg := config.New(
-		config.WithDHCPPort(67),
-		config.WithPXEPort(4011),
-		config.WithTFTPPort(69),
+	cfg := app.NewConfig(
+		app.WithDHCPPort(67),
+		app.WithPXEPort(4011),
+		app.WithTFTPPort(69),
+		app.WithTFTPUpstreamBase("https://boot.netboot.xyz/ipxe/"),
+		app.WithAdvertisedIP(lanIP),
+		app.WithGeteuid(os.Geteuid),
 	)
 
-	// Require root to bind privileged UDP/67 and receive broadcast traffic
-	if os.Geteuid() != 0 {
-		fmt.Println("This program must be run as root to bind UDP/67 (DHCP).")
-		fmt.Println("Re-run with: sudo ./macos-pxe-boot")
+	a := app.New(cfg)
+	if err := a.Start(); err != nil {
+		log.Printf("failed to start services: %v", err)
 		os.Exit(1)
-	}
-
-	// Discover our outbound IPv4 (used to advertise TFTP server)
-	var lanIP string
-	if ip, err := outboundIP(); err == nil && ip != nil {
-		lanIP = ip.String()
-		log.Printf("Detected outbound IP: %s", lanIP)
-	} else {
-		log.Printf("No outbound IP detected")
-		os.Exit(1)
-	}
-
-	// Start internal TFTP proxy server that fetches bootfiles from netboot.xyz
-	var tftps *tftp.Server
-	{
-		tftps = &tftp.Server{UpstreamBase: "https://boot.netboot.xyz/ipxe/", Port: cfg.TFTPPort}
-		if err := tftps.StartAsync(); err != nil {
-			log.Printf("error: TFTP server not started: %v", err)
-			os.Exit(1)
-		}
-	}
-
-	// Start ProxyDHCP — listens for PXE clients and responds with TFTP server and bootfile
-	var proxy *dhcp.ProxyDHCP
-	{
-		proxy = &dhcp.ProxyDHCP{TFTPServerIP: lanIP, DHCPPort: cfg.DHCPPort, PXEPort: cfg.ProxyDHCPPort}
-		if err := proxy.StartAsync(); err != nil {
-			log.Printf("error: ProxyDHCP not started: %v", err)
-			os.Exit(1)
-		} else {
-			log.Printf("Waiting for PXE clients on :%d and :%d (tftp=%s)", cfg.DHCPPort, cfg.ProxyDHCPPort, lanIP)
-		}
 	}
 
 	// Handle shutdown
@@ -66,8 +42,7 @@ func main() {
 	signal.Notify(sigc, syscall.SIGINT, syscall.SIGTERM)
 	<-sigc
 	log.Printf("shutting down...")
-	_ = proxy.Close()
-	_ = tftps.Close()
+	a.Stop()
 }
 
 // outboundIP discovers the preferred outbound IPv4 address by opening
