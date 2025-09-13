@@ -2,7 +2,6 @@ package app
 
 import (
 	"fmt"
-	"log/slog"
 	"os"
 
 	"github.com/srcreigh/pxehost/internal/dhcp"
@@ -54,23 +53,33 @@ func (a *App) Start() error {
 	if a.cfg.AdvertisedIP == "" {
 		return fmt.Errorf("missing AdvertisedIP in config")
 	}
+	if a.cfg.Logger == nil {
+		return fmt.Errorf("missing Logger in config")
+	}
 	if a.cfg.BootfileProvider == nil {
 		return fmt.Errorf("missing BootfileProvider in config")
 	}
 
 	// Start TFTP proxy
-	a.tftps = &tftp.Server{Provider: a.cfg.BootfileProvider, Port: a.cfg.TFTPPort, PacketLog: a.cfg.PacketLog}
+	a.tftps = &tftp.Server{Provider: a.cfg.BootfileProvider, Port: a.cfg.TFTPPort, PacketLog: a.cfg.PacketLog, Logger: a.cfg.Logger}
 	if err := a.tftps.StartAsync(); err != nil {
 		return fmt.Errorf("tftp server start: %w", err)
 	}
 
 	// Start ProxyDHCP
-	a.proxy = &dhcp.ProxyDHCP{TFTPServerIP: a.cfg.AdvertisedIP, DHCPPort: a.cfg.DHCPPort, PXEPort: a.cfg.ProxyDHCPPort, PacketLog: a.cfg.PacketLog}
+	a.proxy = &dhcp.ProxyDHCP{
+		TFTPServerIP:      a.cfg.AdvertisedIP,
+		DHCPPort:          a.cfg.DHCPPort,
+		PXEPort:           a.cfg.ProxyDHCPPort,
+		PacketLog:         a.cfg.PacketLog,
+		DHCPBroadcastPort: a.cfg.DHCPBroadcastPort,
+		Logger:            a.cfg.Logger,
+	}
 	if err := a.proxy.StartAsync(); err != nil {
 		_ = a.tftps.Close()
 		return fmt.Errorf("proxydhcp start: %w", err)
 	}
-	slog.Info("Waiting for PXE clients", "dhcp_port", a.cfg.DHCPPort, "pxe_port", a.cfg.ProxyDHCPPort, "tftp", a.cfg.AdvertisedIP)
+	a.cfg.Logger.Info("Waiting for PXE clients", "dhcp_port", a.cfg.DHCPPort, "pxe_port", a.cfg.ProxyDHCPPort, "tftp", a.cfg.AdvertisedIP)
 	return nil
 }
 

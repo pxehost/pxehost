@@ -36,6 +36,7 @@ func main() {
 		app.WithBootfileProvider(provider),
 		app.WithAdvertisedIP(lanIP),
 		app.WithGeteuid(os.Geteuid),
+		app.WithLogger(slog.Default()),
 	)
 
 	a := app.New(cfg)

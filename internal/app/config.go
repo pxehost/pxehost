@@ -1,6 +1,8 @@
 package app
 
 import (
+	"log/slog"
+
 	"github.com/srcreigh/pxehost/internal/capture"
 	"github.com/srcreigh/pxehost/internal/tftp"
 )
@@ -15,6 +17,10 @@ type Config struct {
 	AdvertisedIP     string                // IPv4 advertised to clients (TFTP server IP)
 	PacketLog        capture.PacketLogger  // optional: packet logger implementation
 	Geteuid          func() int            // used for permission checks
+	Logger           *slog.Logger          // required: application logger
+	// DHCPBroadcastPort sets the UDP port used for DHCP broadcast replies.
+	// Useful for tests where the client listens on a specific port.
+	DHCPBroadcastPort int
 }
 
 // Option mutates a Config value.
@@ -53,3 +59,9 @@ func WithGeteuid(geteuid func() int) Option { return func(c *Config) { c.Geteuid
 
 // WithPacketLogger sets the UDP packet logger implementation (may be nil to disable).
 func WithPacketLogger(l capture.PacketLogger) Option { return func(c *Config) { c.PacketLog = l } }
+
+// WithLogger sets the application slog logger (must be non-nil).
+func WithLogger(l *slog.Logger) Option { return func(c *Config) { c.Logger = l } }
+
+// WithDHCPBroadcastPort sets the UDP port used for DHCP broadcast replies.
+func WithDHCPBroadcastPort(p int) Option { return func(c *Config) { c.DHCPBroadcastPort = p } }

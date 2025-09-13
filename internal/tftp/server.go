@@ -30,7 +30,7 @@ type Server struct {
 	// Provider supplies bootfiles by name.
 	Provider BootfileProvider
 
-	// Logger is optional. If nil, the default slog logger is used.
+	// Logger must be provided.
 	Logger *slog.Logger
 
 	conn   *net.UDPConn
@@ -45,6 +45,9 @@ type Server struct {
 func (s *Server) StartAsync() error {
 	if s.Provider == nil {
 		return fmt.Errorf("tftp: Provider must be set")
+	}
+	if s.Logger == nil {
+		return fmt.Errorf("tftp: Logger must be set")
 	}
 	addr, err := net.ResolveUDPAddr("udp4", fmt.Sprintf(":%d", s.Port))
 	if err != nil {
@@ -67,6 +70,18 @@ func (s *Server) Close() error {
 		}
 	}
 	return nil
+}
+
+// BoundPort returns the actual UDP port the server is listening on.
+// It returns 0 if the server has not been started.
+func (s *Server) BoundPort() int {
+	if s == nil || s.conn == nil {
+		return 0
+	}
+	if la, ok := s.conn.LocalAddr().(*net.UDPAddr); ok && la != nil {
+		return la.Port
+	}
+	return 0
 }
 
 func (s *Server) serve() {
@@ -205,6 +220,8 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
 	}()
 	s.logf(slog.LevelInfo, "sid=%d session started laddr=%s raddr=%s size=%d", sid, sessConn.LocalAddr().String(), client.String(), size)
 
+	// no special demux; client should send ACKs to the session port
+
 	// Option negotiation: if client requested options, send OACK for tsize/blksize
 	// We fix blksize=512; if requested a different value, we still respond with 512.
 	wantOACK := len(opts) > 0
@@ -239,7 +256,10 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
 		}
 		// Wait for ACK block 0
 		buf := make([]byte, 1500)
-		if err := sessConn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		// Wait briefly for ACK(0). Some clients immediately accept DATA after OACK
+		// without sending ACK(0), so keep this timeout short to avoid delaying
+		// the first DATA block in that case.
+		if err := sessConn.SetReadDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
 			s.logf(slog.LevelWarn, "sid=%d set read deadline (OACK ACK wait) error: %v", sid, err)
 		}
 		n, raddr, err := sessConn.ReadFromUDP(buf)
@@ -437,15 +457,12 @@ func buildOACK(kv map[string]string) []byte {
 	return out
 }
 
-// logf logs via the server's Logger if provided, else the package logger.
+// logf logs via the server's Logger.
 func (s *Server) logf(level slog.Level, format string, args ...any) {
 	if s == nil {
 		return
 	}
 	logger := s.Logger
-	if logger == nil {
-		logger = slog.Default()
-	}
 	msg := fmt.Sprintf("TFTP: "+format, args...)
 	switch level {
 	case slog.LevelDebug:
