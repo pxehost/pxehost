@@ -10,6 +10,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/srcreigh/pxehost/internal/capture"
 )
 
 // DHCP protocol constants and helpers
@@ -64,6 +66,9 @@ type ProxyDHCP struct {
 
 	DHCPPort int // canonically 67
 	PXEPort  int // canonically 4011
+
+	// PacketLog, when non-nil, receives JSONL entries for UDP packets.
+	PacketLog capture.PacketLogger
 }
 
 func (p *ProxyDHCP) StartAsync() error {
@@ -141,6 +146,23 @@ func (p *ProxyDHCP) serve(conn *net.UDPConn, port int) {
 			return
 		}
 		log.Printf("ProxyDHCP:%d received %d bytes from %s", port, n, raddr.String())
+		// Packet capture: inbound packet
+		if p.PacketLog != nil {
+			lip := ""
+			lport := 0
+			if la, ok := conn.LocalAddr().(*net.UDPAddr); ok && la != nil {
+				lip = la.IP.String()
+				lport = la.Port
+			}
+			p.PacketLog.Log(capture.MakePacket(
+				capture.DirIn,
+				"DHCP",
+				lip, lport,
+				raddr.IP.String(), raddr.Port,
+				fmt.Sprintf("port=%d", port),
+				append([]byte(nil), buf[:n]...),
+			))
+		}
 		pkt := make([]byte, n)
 		copy(pkt, buf[:n])
 		go p.handle(conn, pkt, raddr, port)
@@ -294,6 +316,23 @@ func (p *ProxyDHCP) handle(conn *net.UDPConn, req []byte, src *net.UDPAddr, port
 			"ProxyDHCP:%d: sent %d-byte reply to %s (type=%d arch=0x%04x next-server=%s boot=%s)",
 			port, n, dst.String(), respMsgType, arch, p.TFTPServerIP, bootfile,
 		)
+		// Packet capture: outbound reply
+		if p.PacketLog != nil {
+			lip := ""
+			lport := 0
+			if la, ok := conn.LocalAddr().(*net.UDPAddr); ok && la != nil {
+				lip = la.IP.String()
+				lport = la.Port
+			}
+			p.PacketLog.Log(capture.MakePacket(
+				capture.DirOut,
+				"DHCP",
+				lip, lport,
+				dst.IP.String(), dst.Port,
+				fmt.Sprintf("port=%d", port),
+				append([]byte(nil), resp...),
+			))
+		}
 	}
 }
 

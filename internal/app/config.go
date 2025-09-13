@@ -1,14 +1,17 @@
 package app
 
+import "github.com/srcreigh/pxehost/internal/capture"
+
 // Config holds runtime configuration for the PXE host and its dependencies.
 // Construct via functional options for testability.
 type Config struct {
-	DHCPPort         int        // DHCP/ProxyDHCP listen port (typically 67)
-	ProxyDHCPPort    int        // PXE service listen port (typically 4011)
-	TFTPPort         int        // TFTP listen port (typically 69)
-	TFTPUpstreamBase string     // e.g. https://boot.netboot.xyz/ipxe/
-	AdvertisedIP     string     // IPv4 advertised to clients (TFTP server IP)
-	Geteuid          func() int // used for permission checks
+	DHCPPort         int                  // DHCP/ProxyDHCP listen port (typically 67)
+	ProxyDHCPPort    int                  // PXE service listen port (typically 4011)
+	TFTPPort         int                  // TFTP listen port (typically 69)
+	TFTPUpstreamBase string               // e.g. https://boot.netboot.xyz/ipxe/
+	AdvertisedIP     string               // IPv4 advertised to clients (TFTP server IP)
+	PacketLog        capture.PacketLogger // optional: packet logger implementation
+	Geteuid          func() int           // used for permission checks
 }
 
 // Option mutates a Config value.
@@ -42,3 +45,6 @@ func WithAdvertisedIP(ip string) Option { return func(c *Config) { c.AdvertisedI
 
 // WithGeteuid sets the function used to get the effective user ID.
 func WithGeteuid(geteuid func() int) Option { return func(c *Config) { c.Geteuid = geteuid } }
+
+// WithPacketLogger sets the UDP packet logger implementation (may be nil to disable).
+func WithPacketLogger(l capture.PacketLogger) Option { return func(c *Config) { c.PacketLog = l } }

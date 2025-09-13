@@ -59,13 +59,13 @@ func (a *App) Start() error {
 	}
 
 	// Start TFTP proxy
-	a.tftps = &tftp.Server{UpstreamBase: a.cfg.TFTPUpstreamBase, Port: a.cfg.TFTPPort}
+	a.tftps = &tftp.Server{UpstreamBase: a.cfg.TFTPUpstreamBase, Port: a.cfg.TFTPPort, PacketLog: a.cfg.PacketLog}
 	if err := a.tftps.StartAsync(); err != nil {
 		return fmt.Errorf("tftp server start: %w", err)
 	}
 
 	// Start ProxyDHCP
-	a.proxy = &dhcp.ProxyDHCP{TFTPServerIP: a.cfg.AdvertisedIP, DHCPPort: a.cfg.DHCPPort, PXEPort: a.cfg.ProxyDHCPPort}
+	a.proxy = &dhcp.ProxyDHCP{TFTPServerIP: a.cfg.AdvertisedIP, DHCPPort: a.cfg.DHCPPort, PXEPort: a.cfg.ProxyDHCPPort, PacketLog: a.cfg.PacketLog}
 	if err := a.proxy.StartAsync(); err != nil {
 		_ = a.tftps.Close()
 		return fmt.Errorf("proxydhcp start: %w", err)
