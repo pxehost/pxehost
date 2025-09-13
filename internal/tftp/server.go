@@ -10,6 +10,7 @@ import (
     "net/http"
     "path"
     "strings"
+    "sync/atomic"
     "time"
 )
 
@@ -31,7 +32,11 @@ type Server struct {
     // to this base and fetched via GET.
     UpstreamBase string
 
-    conn *net.UDPConn
+    // Logger is optional. If nil, the package-level log.Printf is used.
+    Logger *log.Logger
+
+    conn  *net.UDPConn
+    nextID uint64
 }
 
 func (s *Server) StartAsync() error {
@@ -51,7 +56,7 @@ func (s *Server) StartAsync() error {
         return err
     }
     s.conn = c
-    log.Printf("TFTP: listening on UDP :69, proxying to %s", s.UpstreamBase)
+    s.logf("listening on UDP :69, proxying to %s", s.UpstreamBase)
     go s.serve()
     return nil
 }
@@ -68,7 +73,7 @@ func (s *Server) serve() {
     for {
         n, raddr, err := s.conn.ReadFromUDP(buf)
         if err != nil {
-            log.Printf("TFTP: read error: %v", err)
+            s.logf("read error: %v", err)
             return
         }
         // Handle each request in its own goroutine
@@ -91,6 +96,7 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
     if len(req) < 4 || (int(req[0])<<8|int(req[1])) != opRRQ {
         return
     }
+    sid := atomic.AddUint64(&s.nextID, 1)
     // Extract zero-terminated strings
     i := 2
     nextz := func() (string, bool) {
@@ -119,6 +125,7 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
         return
     }
     if strings.ToLower(mode) != "octet" {
+        s.logf("sid=%d client=%s unsupported mode=%q for file=%q", sid, client.String(), mode, filename)
         s.sendError(client, 0, "only octet mode supported")
         return
     }
@@ -141,12 +148,14 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
     cleanName := path.Base(strings.TrimLeft(filename, "/\\"))
     upstream := s.UpstreamBase + cleanName
 
+    s.logf("sid=%d client=%s rrq file=%q clean=%q mode=%s opts=%v upstream=%s", sid, client.String(), filename, cleanName, strings.ToLower(mode), opts, upstream)
+
     // Fetch upstream file into memory
     ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
     defer cancel()
     body, size, err := fetch(ctx, upstream)
     if err != nil {
-        log.Printf("TFTP: fetch failed for %q: %v", upstream, err)
+        s.logf("sid=%d fetch failed upstream=%q err=%v", sid, upstream, err)
         s.sendError(client, 1, "file not found")
         return
     }
@@ -155,25 +164,26 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
     // Create session socket bound to ephemeral port
     sessConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
     if err != nil {
+        s.logf("sid=%d failed to open session socket: %v", sid, err)
         s.sendError(client, 0, "internal error")
         return
     }
     defer sessConn.Close()
+    s.logf("sid=%d session started laddr=%s raddr=%s size=%d", sid, sessConn.LocalAddr().String(), client.String(), size)
 
     // Option negotiation: if client requested options, send OACK for tsize/blksize
     // We fix blksize=512; if requested a different value, we still respond with 512.
     wantOACK := len(opts) > 0
     if wantOACK {
-        oack := buildOACK(map[string]string{
-            "tsize":   fmt.Sprintf("%d", size),
-        })
+        oackMap := map[string]string{
+            "tsize": fmt.Sprintf("%d", size),
+        }
         if _, has := opts["blksize"]; has {
             // echo blksize we can do (512)
-            oack = buildOACK(map[string]string{
-                "tsize":   fmt.Sprintf("%d", size),
-                "blksize": "512",
-            })
+            oackMap["blksize"] = "512"
         }
+        s.logf("sid=%d oack request opts=%v respond=%v", sid, opts, oackMap)
+        oack := buildOACK(oackMap)
         sessConn.SetWriteDeadline(time.Now().Add(2 * time.Second))
         _, _ = sessConn.WriteToUDP(oack, client)
         // Wait for ACK block 0
@@ -181,10 +191,11 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
         sessConn.SetReadDeadline(time.Now().Add(5 * time.Second))
         n, raddr, err := sessConn.ReadFromUDP(buf)
         if err != nil || raddr == nil || !raddr.IP.Equal(client.IP) || raddr.Port != client.Port {
-            log.Printf("TFTP: no ACK(0) after OACK from %s: %v", client.String(), err)
+            s.logf("sid=%d no ACK(0) after OACK from %s err=%v", sid, client.String(), err)
             // proceed anyway (some clients may accept data immediately)
         } else if n >= 4 && (int(buf[0])<<8|int(buf[1])) == opACK && int(buf[2]) == 0 && int(buf[3]) == 0 {
             // ok
+            s.logf("sid=%d received ACK(0) after OACK", sid)
         }
     }
 
@@ -192,6 +203,8 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
     const blockSize = 512
     blockNum := uint16(1)
     tmp := make([]byte, blockSize)
+    var total int64
+    start := time.Now()
     for {
         // Read next chunk
         n, rerr := io.ReadFull(body, tmp)
@@ -200,6 +213,7 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
         } else if rerr == io.EOF {
             n = 0
         } else if rerr != nil && rerr != io.ErrUnexpectedEOF {
+            s.logf("sid=%d read error from upstream: %v", sid, rerr)
             s.sendError(client, 0, "read error")
             return
         }
@@ -217,7 +231,7 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
         for attempt := 0; attempt < maxRetry; attempt++ {
             sessConn.SetWriteDeadline(time.Now().Add(2 * time.Second))
             if _, err := sessConn.WriteToUDP(pkt, client); err != nil {
-                log.Printf("TFTP: write error to %s: %v", client.String(), err)
+                s.logf("sid=%d write error to %s: %v", sid, client.String(), err)
                 // retry on transient errors; next attempt will resend
                 continue
             }
@@ -226,6 +240,9 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
             sessConn.SetReadDeadline(time.Now().Add(5 * time.Second))
             n, raddr, err := sessConn.ReadFromUDP(buf)
             if err != nil {
+                if attempt+1 < maxRetry {
+                    s.logf("sid=%d timeout waiting ACK for block=%d attempt=%d/%d", sid, blockNum, attempt+1, maxRetry)
+                }
                 // retry
                 continue
             }
@@ -247,14 +264,19 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
         }
         if !acked {
             // Give up on this transfer after max retries without ACK
-            log.Printf("TFTP: no ACK for block %d from %s after %d attempts; aborting session", blockNum, client.String(), maxRetry)
+            s.logf("sid=%d no ACK for block=%d from %s after %d attempts; aborting session", sid, blockNum, client.String(), maxRetry)
             return
         }
 
         // If last block (<512), transfer complete
         if len(data) < blockSize {
+            total += int64(len(data))
+            dur := time.Since(start)
+            rate := float64(total) / dur.Seconds()
+            s.logf("sid=%d transfer complete bytes=%d blocks=%d duration=%s rate=%.0fB/s", sid, total, int(blockNum), dur.Truncate(time.Millisecond), rate)
             return
         }
+        total += int64(len(data))
         blockNum++
         if blockNum == 0 { // wrap (rare, huge file). TFTP wraps at 65535->0->1
             blockNum = 1
@@ -274,6 +296,7 @@ func (s *Server) sendError(dst *net.UDPAddr, code int, msg string) {
     copy(b[4:], []byte(msg))
     s.conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
     _, _ = s.conn.WriteToUDP(b, dst)
+    s.logf("sent ERROR to %s code=%d msg=%q", dst.String(), code, msg)
 }
 
 func buildOACK(kv map[string]string) []byte {
@@ -304,4 +327,16 @@ func fetch(ctx context.Context, url string) (io.ReadCloser, int64, error) {
         return nil, 0, fmt.Errorf("unexpected status: %s", resp.Status)
     }
     return resp.Body, resp.ContentLength, nil
+}
+
+// logf logs via the server's Logger if provided, else the package logger.
+func (s *Server) logf(format string, args ...any) {
+    if s == nil {
+        return
+    }
+    if s.Logger != nil {
+        s.Logger.Printf("TFTP: "+format, args...)
+        return
+    }
+    log.Printf("TFTP: "+format, args...)
 }
