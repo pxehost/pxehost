@@ -5,8 +5,8 @@ import (
 	"log"
 	"os"
 
-	"github.com/shanebo/macos-pxe-boot/internal/dhcp"
-	"github.com/shanebo/macos-pxe-boot/internal/tftp"
+	"github.com/srcreigh/pxehost/internal/dhcp"
+	"github.com/srcreigh/pxehost/internal/tftp"
 )
 
 // App wires together the components to run the PXE host.

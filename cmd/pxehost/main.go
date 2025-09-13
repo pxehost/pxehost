@@ -8,7 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/shanebo/macos-pxe-boot/internal/app"
+	"github.com/srcreigh/pxehost/internal/app"
 )
 
 func main() {

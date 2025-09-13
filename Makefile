@@ -1,14 +1,14 @@
-.PHONY: all build clean macos-pxe-boot
+.PHONY: all build clean pxehost
 
-all: macos-pxe-boot
+all: pxehost
 
-build: macos-pxe-boot
+build: pxehost
 
-macos-pxe-boot:
-	go build -trimpath -ldflags="-s -w" -o macos-pxe-boot ./cmd/pxehost
+pxehost:
+	go build -trimpath -ldflags="-s -w" -o pxehost ./cmd/pxehost
 
 clean:
-	rm -f macos-pxe-boot
+	rm -f pxehost
 
 format:
 	./scripts/format.sh

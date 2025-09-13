@@ -1,3 +1,3 @@
-module github.com/shanebo/macos-pxe-boot
+module github.com/srcreigh/pxehost
 
 go 1.24
