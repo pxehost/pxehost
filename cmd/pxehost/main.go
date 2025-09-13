@@ -3,12 +3,12 @@ package main
 import (
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/shanebo/macos-pxe-boot/internal/dhcp"
-	"github.com/shanebo/macos-pxe-boot/internal/netutil"
 	"github.com/shanebo/macos-pxe-boot/internal/tftp"
 )
 
@@ -22,16 +22,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Detect LAN IP (used to advertise TFTP server); continue regardless
-	lanIP, iface := netutil.DetectLANIPv4()
-	if lanIP != "" {
-		if iface != "" {
-			log.Printf("Detected LAN IP: %s (iface=%s)", lanIP, iface)
-		} else {
-			log.Printf("Detected LAN IP: %s", lanIP)
-		}
+	// Discover our outbound IPv4 (used to advertise TFTP server)
+	var lanIP string
+	if ip, err := outboundIP(); err == nil && ip != nil {
+		lanIP = ip.String()
+		log.Printf("Detected outbound IP: %s", lanIP)
 	} else {
-		log.Printf("No LAN IP detected; will advertise 127.0.0.1 for TFTP")
+		log.Printf("No outbound IP detected")
+		os.Exit(1)
 	}
 
 	// Start internal TFTP proxy server (UDP/69) that fetches from netboot.xyz
@@ -47,16 +45,12 @@ func main() {
 	// Start ProxyDHCP on UDP/67 and :4011 — selects bootfile by arch
 	var proxy *dhcp.ProxyDHCP
 	{
-		advIP := lanIP
-		if advIP == "" {
-			advIP = "127.0.0.1"
-		}
-		proxy = &dhcp.ProxyDHCP{TFTPServerIP: advIP}
+		proxy = &dhcp.ProxyDHCP{TFTPServerIP: lanIP}
 		if err := proxy.StartAsync(); err != nil {
 			log.Printf("error: ProxyDHCP not started: %v", err)
 			os.Exit(1)
 		} else {
-			log.Printf("Waiting for PXE clients on :67 and :4011 (tftp=%s)", advIP)
+			log.Printf("Waiting for PXE clients on :67 and :4011 (tftp=%s)", lanIP)
 		}
 	}
 
@@ -67,4 +61,18 @@ func main() {
 	log.Printf("shutting down...")
 	_ = proxy.Close()
 	_ = tftps.Close()
+}
+
+// outboundIP discovers the preferred outbound IPv4 address by opening
+// a UDP "connection" to a public IP. No packets are sent; the kernel
+// selects a route and binds a local address which we return.
+func outboundIP() (net.IP, error) {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	localAddr := conn.LocalAddr().(*net.UDPAddr)
+	return localAddr.IP, nil
 }

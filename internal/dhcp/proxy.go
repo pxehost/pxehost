@@ -1,16 +1,57 @@
 package dhcp
 
 import (
-	"bytes"
-	"errors"
-	"encoding/binary"
-	"fmt"
-	"log"
-	"net"
-	"strings"
-	"syscall"
-	"time"
+    "bytes"
+    "errors"
+    "encoding/binary"
+    "fmt"
+    "log"
+    "net"
+    "strings"
+    "syscall"
+    "time"
 )
+
+// DHCP protocol constants and helpers
+const (
+    // Fixed BOOTP/DHCP header lengths and offsets
+    dhcpFixedHeaderLen = 240 // 236-byte BOOTP + 4-byte magic cookie
+    dhcpCookieOffset   = 236
+
+    // BOOTP op codes
+    bootpOpRequest = 1
+    bootpOpReply   = 2
+
+    // BOOTP flags
+    bootpFlagBroadcastMask = 0x8000
+
+    // DHCP option codes (subset used here)
+    optPad   = 0
+    optEnd   = 255
+    optMsgType = 53
+    optServerID = 54
+    optVendorClassID = 60
+    optTFTPServerName = 66
+    optBootfileName = 67
+    optUserClass = 77
+    optClientArch = 93
+    optClientUUID = 97
+    optParamRequestList = 55
+    optMaxDHCPMsgSize = 57
+)
+
+// DHCP message type values
+const (
+    dhcpMsgDiscover = 1
+    dhcpMsgOffer    = 2
+    dhcpMsgRequest  = 3
+    dhcpMsgDecline  = 4
+    dhcpMsgAck      = 5
+    dhcpMsgNak      = 6
+)
+
+// dhcpMagicCookie contains the fixed RFC2132 cookie ("99,130,83,99").
+var dhcpMagicCookie = [4]byte{99, 130, 83, 99}
 
 // ProxyDHCP is a minimal ProxyDHCP responder (PXE Boot Server Discovery).
 // It binds to UDP ports 67 and 4011 and advertises TFTP server and bootfile
@@ -114,11 +155,11 @@ func isNetClosed(err error) bool {
 }
 
 func (p *ProxyDHCP) handle(conn *net.UDPConn, req []byte, src *net.UDPAddr, port int) {
-	// Minimal DHCP parse: ensure BOOTP and cookie present, echo xid and chaddr.
-	if len(req) < 240 || req[236] != 99 || req[237] != 130 || req[238] != 83 || req[239] != 99 {
-		log.Printf("ProxyDHCP:%d: ignoring non-DHCP/invalid packet from %s (len=%d)", port, src.String(), len(req))
-		return
-	}
+    // Minimal DHCP parse: ensure BOOTP and cookie present, echo xid and chaddr.
+    if len(req) < dhcpFixedHeaderLen || !bytes.Equal(req[dhcpCookieOffset:dhcpCookieOffset+4], dhcpMagicCookie[:]) {
+        log.Printf("ProxyDHCP:%d: ignoring non-DHCP/invalid packet from %s (len=%d)", port, src.String(), len(req))
+        return
+    }
 	// Only respond to PXE clients when vendor class contains "PXEClient".
 	isPXE := false
 	opts := parseOptions(req[240:])
@@ -126,9 +167,9 @@ func (p *ProxyDHCP) handle(conn *net.UDPConn, req []byte, src *net.UDPAddr, port
 	if len(opts) > 0 {
 		log.Printf("ProxyDHCP:%d: incoming options from %s:\n%s", port, src.String(), formatDHCPOptions(opts))
 	}
-	if v, ok := opts[60]; ok && containsString(v, "PXEClient") {
-		isPXE = true
-	}
+    if v, ok := opts[optVendorClassID]; ok && containsString(v, "PXEClient") {
+        isPXE = true
+    }
 	if !isPXE {
 		log.Printf("ProxyDHCP:%d: DHCP packet from %s is not PXEClient; ignoring", port, src.String())
 		return
@@ -137,30 +178,30 @@ func (p *ProxyDHCP) handle(conn *net.UDPConn, req []byte, src *net.UDPAddr, port
 	// Determine incoming DHCP message type (option 53)
 	// If DISCOVER (1) -> respond with OFFER (2)
 	// If REQUEST (3) or others -> respond with ACK (5)
-	respMsgType := byte(5) // default ACK
-	if mt, ok := opts[53]; ok && len(mt) == 1 {
-		switch mt[0] {
-		case 1: // DISCOVER
-			respMsgType = 2 // OFFER
-		case 3: // REQUEST
-			respMsgType = 5 // ACK
-		}
-	}
+    respMsgType := byte(dhcpMsgAck) // default ACK
+    if mt, ok := opts[optMsgType]; ok && len(mt) == 1 {
+        switch mt[0] {
+        case dhcpMsgDiscover:
+            respMsgType = dhcpMsgOffer
+        case dhcpMsgRequest:
+            respMsgType = dhcpMsgAck
+        }
+    }
 
 	// Determine client architecture (option 93). Default to UEFI x86_64 if unknown.
 	arch := uint16(0x0000)
-	if v, ok := opts[93]; ok && len(v) >= 2 {
-		arch = uint16(v[0])<<8 | uint16(v[1])
-	}
+    if v, ok := opts[optClientArch]; ok && len(v) >= 2 {
+        arch = uint16(v[0])<<8 | uint16(v[1])
+    }
 
 	// First stage - PXE BIOS firmware needs the .efi/.kpxe TFTP bootfile
 	// Second stage - iPXE (HTTP-capable) firmware gets HTTPS link to menu.ipxe
 	bootfile := ""
 	// If client identifies as iPXE via Option 77 (User Class),
 	// provide an iPXE script URL over HTTPS instead of TFTP bootfile.
-	if uc, ok := opts[77]; ok && bytes.Contains(uc, []byte("iPXE")) {
-		bootfile = "https://boot.netboot.xyz/menu.ipxe"
-	} else {
+    if uc, ok := opts[optUserClass]; ok && bytes.Contains(uc, []byte("iPXE")) {
+        bootfile = "https://boot.netboot.xyz/menu.ipxe"
+    } else {
 		// PXE BIOS step -- need to specify TFTP filename.
 		// Choose bootfile based on arch.
 		// 0 = Intel x86PC (BIOS);
@@ -173,47 +214,47 @@ func (p *ProxyDHCP) handle(conn *net.UDPConn, req []byte, src *net.UDPAddr, port
 	}
 
 	// Build BOOTREPLY (op=2) with DHCP OFFER/ACK and options 60,66,67.
-	resp := make([]byte, 240)
-	resp[0] = 2               // op BOOTREPLY
-	resp[1] = req[1]          // htype
-	resp[2] = req[2]          // hlen
-	resp[3] = 0               // hops
-	copy(resp[4:8], req[4:8]) // xid
+    resp := make([]byte, dhcpFixedHeaderLen)
+    resp[0] = bootpOpReply    // op BOOTREPLY
+    resp[1] = req[1]          // htype
+    resp[2] = req[2]          // hlen
+    resp[3] = 0               // hops
+    copy(resp[4:8], req[4:8]) // xid
 	// secs, flags 0
 	// ciaddr/yiaddr/giaddr zeros for proxy
 	// siaddr: TFTP server IP
-	if ip := net.ParseIP(p.TFTPServerIP).To4(); ip != nil {
-		copy(resp[20:24], ip)
-	}
+    if ip := net.ParseIP(p.TFTPServerIP).To4(); ip != nil {
+        copy(resp[20:24], ip)
+    }
 	// chaddr
 	copy(resp[28:44], req[28:44])
 	// BOOTP legacy sname/file fields left empty; use option 67 instead
-	// magic cookie
-	resp[236], resp[237], resp[238], resp[239] = 99, 130, 83, 99
+    // magic cookie
+    copy(resp[dhcpCookieOffset:dhcpCookieOffset+4], dhcpMagicCookie[:])
 
 	// Options
 	opt := make([]byte, 0, 128)
-	// DHCP Message Type (53): OFFER (2) or ACK (5)
-	opt = append(opt, 53, 1, respMsgType)
+    // DHCP Message Type (53): OFFER (2) or ACK (5)
+    opt = append(opt, optMsgType, 1, respMsgType)
 	// DHCP Server Identifier (54): advertise our address (use TFTPServerIP)
-	if ip := net.ParseIP(p.TFTPServerIP).To4(); ip != nil {
-		opt = append(opt, 54, 4)
-		opt = append(opt, ip...)
-	}
-	// Vendor class id (60): PXEClient
-	opt = append(opt, 60, byte(len("PXEClient")))
-	opt = append(opt, []byte("PXEClient")...)
-	// TFTP server name (66)
-	if p.TFTPServerIP != "" {
-		opt = append(opt, 66, byte(len(p.TFTPServerIP)))
-		opt = append(opt, []byte(p.TFTPServerIP)...)
-	}
-	// Bootfile name (67)
-	opt = append(opt, 67, byte(len(bootfile)))
-	opt = append(opt, []byte(bootfile)...)
-	// End option
-	opt = append(opt, 255)
-	resp = append(resp, opt...)
+    if ip := net.ParseIP(p.TFTPServerIP).To4(); ip != nil {
+        opt = append(opt, optServerID, 4)
+        opt = append(opt, ip...)
+    }
+    // Vendor class id (60): PXEClient
+    opt = append(opt, optVendorClassID, byte(len("PXEClient")))
+    opt = append(opt, []byte("PXEClient")...)
+    // TFTP server name (66)
+    if p.TFTPServerIP != "" {
+        opt = append(opt, optTFTPServerName, byte(len(p.TFTPServerIP)))
+        opt = append(opt, []byte(p.TFTPServerIP)...)
+    }
+    // Bootfile name (67)
+    opt = append(opt, optBootfileName, byte(len(bootfile)))
+    opt = append(opt, []byte(bootfile)...)
+    // End option
+    opt = append(opt, optEnd)
+    resp = append(resp, opt...)
 
 	// Log outgoing options in a readable way
 	if len(opt) > 0 {
@@ -223,12 +264,12 @@ func (p *ProxyDHCP) handle(conn *net.UDPConn, req []byte, src *net.UDPAddr, port
 
 	// Decide reply destination: broadcast if client has no IP or requests broadcast
 	dst := &net.UDPAddr{IP: net.IPv4bcast, Port: 68}
-	// BOOTP flags (broadcast bit 0x8000) at bytes 10-11
-	broadcast := false
-	if len(req) >= 12 {
-		fl := binary.BigEndian.Uint16(req[10:12])
-		broadcast = (fl & 0x8000) != 0
-	}
+    // BOOTP flags (broadcast bit 0x8000) at bytes 10-11
+    broadcast := false
+    if len(req) >= 12 {
+        fl := binary.BigEndian.Uint16(req[10:12])
+        broadcast = (fl & bootpFlagBroadcastMask) != 0
+    }
 	// If source has a unicast IPv4 and did not request broadcast, reply unicast
 	if ip4 := src.IP.To4(); ip4 != nil && !ip4.Equal(net.IPv4zero) && !broadcast {
 		dst = &net.UDPAddr{IP: ip4, Port: src.Port}
@@ -247,20 +288,20 @@ func (p *ProxyDHCP) handle(conn *net.UDPConn, req []byte, src *net.UDPAddr, port
 }
 
 func parseOptions(b []byte) map[byte][]byte {
-	m := make(map[byte][]byte)
-	i := 0
-	for i < len(b) {
-		code := b[i]
-		if code == 0 { // pad
-			i++
-			continue
-		}
-		if code == 255 { // end
-			break
-		}
-		if i+1 >= len(b) {
-			break
-		}
+    m := make(map[byte][]byte)
+    i := 0
+    for i < len(b) {
+        code := b[i]
+        if code == optPad { // pad
+            i++
+            continue
+        }
+        if code == optEnd { // end
+            break
+        }
+        if i+1 >= len(b) {
+            break
+        }
 		l := int(b[i+1])
 		if i+2+l > len(b) {
 			break
@@ -403,83 +444,83 @@ func dhcpOptionName(code byte) string {
 }
 
 func decodeDHCPOption(code byte, v []byte) string {
-	switch code {
-	case 1: // subnet mask
-		if len(v) == 4 {
-			return net.IP(v).String()
-		}
-	case 3, 6: // router or dns servers
-		if len(v)%4 == 0 {
-			ips := make([]string, 0, len(v)/4)
-			for i := 0; i < len(v); i += 4 {
-				ips = append(ips, net.IP(v[i:i+4]).String())
-			}
-			return joinComma(ips)
-		}
-	case 12, 15, 66, 67, 60: // strings
-		return safeASCII(v)
-	case 50, 54: // IP addresses
-		if len(v) == 4 {
-			return net.IP(v).String()
-		}
-	case 51: // lease time
-		if len(v) == 4 {
-			sec := binary.BigEndian.Uint32(v)
-			return fmt.Sprintf("%ds", sec)
-		}
-	case 53: // message type
-		if len(v) == 1 {
-			return fmt.Sprintf("%d (%s)", v[0], dhcpMessageTypeName(v[0]))
-		}
-	case 55: // parameter request list — show raw requested codes
-		if len(v) > 0 {
-			items := make([]string, 0, len(v))
-			for _, c := range v {
-				items = append(items, itoa(int(c)))
-			}
-			return "[" + joinComma(items) + "]"
-		}
-	case 57: // max message size
-		if len(v) == 2 {
-			return fmt.Sprintf("%d", binary.BigEndian.Uint16(v))
-		}
-	case 61: // client identifier
-		return fmt.Sprintf("%s (ascii=%q)", hexBytes(v), printableASCII(v))
-	case 93: // client arch
-		if len(v) >= 2 {
-			arch := uint16(v[0])<<8 | uint16(v[1])
-			return fmt.Sprintf("0x%04x", arch)
-		}
-	case 97: // UUID
-		if len(v) == 17 && v[0] == 0 { // type 0, UUID
-			return fmt.Sprintf("uuid=%s", hexBytes(v[1:]))
-		}
-		return hexBytes(v)
-	}
-	return fmt.Sprintf("len=%d", len(v))
+    switch code {
+    case 1: // subnet mask
+        if len(v) == 4 {
+            return net.IP(v).String()
+        }
+    case 3, 6: // router or dns servers
+        if len(v)%4 == 0 {
+            ips := make([]string, 0, len(v)/4)
+            for i := 0; i < len(v); i += 4 {
+                ips = append(ips, net.IP(v[i:i+4]).String())
+            }
+            return joinComma(ips)
+        }
+    case 12, 15, optTFTPServerName, optBootfileName, optVendorClassID: // strings
+        return safeASCII(v)
+    case 50, optServerID: // IP addresses
+        if len(v) == 4 {
+            return net.IP(v).String()
+        }
+    case 51: // lease time
+        if len(v) == 4 {
+            sec := binary.BigEndian.Uint32(v)
+            return fmt.Sprintf("%ds", sec)
+        }
+    case optMsgType: // message type
+        if len(v) == 1 {
+            return fmt.Sprintf("%d (%s)", v[0], dhcpMessageTypeName(v[0]))
+        }
+    case optParamRequestList: // parameter request list — show raw requested codes
+        if len(v) > 0 {
+            items := make([]string, 0, len(v))
+            for _, c := range v {
+                items = append(items, itoa(int(c)))
+            }
+            return "[" + joinComma(items) + "]"
+        }
+    case optMaxDHCPMsgSize: // max message size
+        if len(v) == 2 {
+            return fmt.Sprintf("%d", binary.BigEndian.Uint16(v))
+        }
+    case 61: // client identifier
+        return fmt.Sprintf("%s (ascii=%q)", hexBytes(v), printableASCII(v))
+    case optClientArch: // client arch
+        if len(v) >= 2 {
+            arch := uint16(v[0])<<8 | uint16(v[1])
+            return fmt.Sprintf("0x%04x", arch)
+        }
+    case optClientUUID: // UUID
+        if len(v) == 17 && v[0] == 0 { // type 0, UUID
+            return fmt.Sprintf("uuid=%s", hexBytes(v[1:]))
+        }
+        return hexBytes(v)
+    }
+    return fmt.Sprintf("len=%d", len(v))
 }
 
 func dhcpMessageTypeName(t byte) string {
-	switch t {
-	case 1:
-		return "DISCOVER"
-	case 2:
-		return "OFFER"
-	case 3:
-		return "REQUEST"
-	case 4:
-		return "DECLINE"
-	case 5:
-		return "ACK"
-	case 6:
-		return "NAK"
-	case 7:
-		return "RELEASE"
-	case 8:
-		return "INFORM"
-	default:
-		return "UNKNOWN"
-	}
+    switch t {
+    case dhcpMsgDiscover:
+        return "DISCOVER"
+    case dhcpMsgOffer:
+        return "OFFER"
+    case dhcpMsgRequest:
+        return "REQUEST"
+    case dhcpMsgDecline:
+        return "DECLINE"
+    case dhcpMsgAck:
+        return "ACK"
+    case dhcpMsgNak:
+        return "NAK"
+    case 7:
+        return "RELEASE"
+    case 8:
+        return "INFORM"
+    default:
+        return "UNKNOWN"
+    }
 }
 
 func hexBytes(b []byte) string {
