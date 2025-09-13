@@ -1,10 +1,7 @@
 package netutil
 
 import (
-    "bytes"
     "net"
-    "os/exec"
-    "strings"
 )
 
 // DetectLANIPv4 returns the first non-loopback, RFC1918 IPv4 address and the interface name.
@@ -43,42 +40,5 @@ func isRFC1918(ip net.IP) bool {
         return true
     }
     return false
-}
-
-// DetectDefaultGateway tries to detect the default gateway IP (macOS-friendly).
-func DetectDefaultGateway() string {
-    // macOS: route -n get default
-    cmd := exec.Command("route", "-n", "get", "default")
-    var out bytes.Buffer
-    cmd.Stdout = &out
-    if err := cmd.Run(); err == nil {
-        lines := strings.Split(out.String(), "\n")
-        for _, ln := range lines {
-            ln = strings.TrimSpace(ln)
-            if strings.HasPrefix(ln, "gateway:") {
-                f := strings.Fields(ln)
-                if len(f) >= 2 {
-                    return f[1]
-                }
-            }
-        }
-    }
-    // Fallback: netstat -rn | default
-    cmd = exec.Command("netstat", "-rn")
-    out.Reset()
-    cmd.Stdout = &out
-    if err := cmd.Run(); err == nil {
-        lines := strings.Split(out.String(), "\n")
-        for _, ln := range lines {
-            ln = strings.TrimSpace(ln)
-            if strings.HasPrefix(ln, "default ") {
-                f := strings.Fields(ln)
-                if len(f) >= 2 {
-                    return f[1]
-                }
-            }
-        }
-    }
-    return ""
 }
 

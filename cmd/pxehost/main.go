@@ -22,9 +22,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Detect LAN and router IPs
+	// Detect LAN IP and interface
 	lanIP, iface := netutil.DetectLANIPv4()
-	routerIP := netutil.DetectDefaultGateway()
 
 	// Checklist and gating before starting ProxyDHCP
 	allOK := true
@@ -36,13 +35,7 @@ func main() {
 		allOK = false
 	}
 
-	okRouter := routerIP != ""
-	printCheck(okRouter, fmt.Sprintf("Router detected: %s", emptyDash(routerIP)))
-
 	fmt.Println()
-	if !okLAN {
-		allOK = false
-	}
 
 	if !allOK {
 		fmt.Println()
