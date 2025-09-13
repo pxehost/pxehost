@@ -199,11 +199,15 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
 		}
 		s.logf("sid=%d oack request opts=%v respond=%v", sid, opts, oackMap)
 		oack := buildOACK(oackMap)
-		sessConn.SetWriteDeadline(time.Now().Add(2 * time.Second))
+        if err := sessConn.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
+            s.logf("sid=%d set write deadline (OACK) error: %v", sid, err)
+        }
 		_, _ = sessConn.WriteToUDP(oack, client)
 		// Wait for ACK block 0
 		buf := make([]byte, 1500)
-		sessConn.SetReadDeadline(time.Now().Add(5 * time.Second))
+        if err := sessConn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+            s.logf("sid=%d set read deadline (OACK ACK wait) error: %v", sid, err)
+        }
 		n, raddr, err := sessConn.ReadFromUDP(buf)
 		if err != nil || raddr == nil || !raddr.IP.Equal(client.IP) || raddr.Port != client.Port {
 			s.logf("sid=%d no ACK(0) after OACK from %s err=%v", sid, client.String(), err)
@@ -244,7 +248,9 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
 		const maxRetry = 5
 		acked := false
 		for attempt := 0; attempt < maxRetry; attempt++ {
-			sessConn.SetWriteDeadline(time.Now().Add(2 * time.Second))
+            if err := sessConn.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
+                s.logf("sid=%d set write deadline (DATA) error: %v", sid, err)
+            }
 			if _, err := sessConn.WriteToUDP(pkt, client); err != nil {
 				s.logf("sid=%d write error to %s: %v", sid, client.String(), err)
 				// retry on transient errors; next attempt will resend
@@ -252,7 +258,9 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
 			}
 			// Wait for ACK
 			buf := make([]byte, 1500)
-			sessConn.SetReadDeadline(time.Now().Add(5 * time.Second))
+            if err := sessConn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+                s.logf("sid=%d set read deadline (ACK wait) error: %v", sid, err)
+            }
 			n, raddr, err := sessConn.ReadFromUDP(buf)
 			if err != nil {
 				if attempt+1 < maxRetry {
@@ -309,7 +317,9 @@ func (s *Server) sendError(dst *net.UDPAddr, code int, msg string) {
 	b[2] = byte(code >> 8)
 	b[3] = byte(code)
 	copy(b[4:], []byte(msg))
-	s.conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
+    if err := s.conn.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
+        s.logf("set write deadline (ERROR pkt) error: %v", err)
+    }
 	_, _ = s.conn.WriteToUDP(b, dst)
 	s.logf("sent ERROR to %s code=%d msg=%q", dst.String(), code, msg)
 }

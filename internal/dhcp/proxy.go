@@ -274,8 +274,10 @@ func (p *ProxyDHCP) handle(conn *net.UDPConn, req []byte, src *net.UDPAddr, port
 	if ip4 := src.IP.To4(); ip4 != nil && !ip4.Equal(net.IPv4zero) && !broadcast {
 		dst = &net.UDPAddr{IP: ip4, Port: src.Port}
 	}
-	// Send reply
-	conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
+    // Send reply
+    if err := conn.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
+        log.Printf("ProxyDHCP:%d: set write deadline error: %v", port, err)
+    }
 	if n, err := conn.WriteToUDP(resp, dst); err != nil {
 		log.Printf("ProxyDHCP write: %v", err)
 	} else {
