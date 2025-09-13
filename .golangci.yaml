@@ -1,0 +1,70 @@
+run:
+  timeout: 3m
+  tests: false
+
+linters:
+  disable-all: true
+  enable:
+    - govet
+    - errcheck
+    - gosimple
+    - staticcheck
+    - ineffassign
+    - unused
+    - typecheck
+    - revive
+    - gosec
+    - gocritic
+    - bodyclose
+    - copyloopvar
+    - unconvert
+    - prealloc
+    - misspell
+    - errorlint
+    - nolintlint
+    - exhaustive
+    - errchkjson
+    - sqlclosecheck
+    - rowserrcheck
+    - noctx
+    - wrapcheck
+    - durationcheck
+    - dogsled
+    - gofumpt
+    - gci
+
+linters-settings:
+  revive:
+    # Keep rules useful for servers without being too noisy.
+    rules:
+      - name: blank-imports
+      - name: context-as-argument
+      - name: error-return
+      - name: if-return
+      - name: increment-decrement
+      - name: range-val-in-closure
+      - name: receiver-naming
+      - name: error-strings
+      - name: exported
+        disabled: true # avoid requiring package/type doc comments
+  gocritic: {}
+  exhaustive:
+    default-signifies-exhaustive: true
+  wrapcheck:
+    ignoreSigs:
+      - "fmt.Errorf" # allow fmt.Errorf with %w (works with errorlint)
+  gci:
+    sections:
+      - standard
+      - default
+      - prefix(github.com/yourorg)
+    skip-generated: true
+  gofumpt:
+    extra-rules: true
+  errchkjson:
+    check-error-free-encoding: true
+
+issues:
+  exclude-use-default: false
+  max-issues-per-linter: 0
+  max-same-issues: 0

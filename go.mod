@@ -1,4 +1,3 @@
 module github.com/shanebo/macos-pxe-boot
 
-go 1.21
-
+go 1.24

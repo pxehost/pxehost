@@ -67,22 +67,22 @@ func (p *ProxyDHCP) StartAsync() error {
 	// Bind IPv4-only to receive IPv4 DHCP broadcasts on :67
 	addr67, err := net.ResolveUDPAddr("udp4", ":67")
 	if err != nil {
-		return err
+		return fmt.Errorf("proxydhcp: resolve :67: %w", err)
 	}
 	c67, err := net.ListenUDP("udp4", addr67)
 	if err != nil {
-		return err
+		return fmt.Errorf("proxydhcp: listen :67: %w", err)
 	}
 	// Bind PXE service port :4011 (required)
 	addr4011, err := net.ResolveUDPAddr("udp4", ":4011")
 	if err != nil {
 		_ = c67.Close()
-		return err
+		return fmt.Errorf("proxydhcp: resolve :4011: %w", err)
 	}
 	c4011, err := net.ListenUDP("udp4", addr4011)
 	if err != nil {
 		_ = c67.Close()
-		return err
+		return fmt.Errorf("proxydhcp: listen :4011: %w", err)
 	}
 
 	p.conn = c67
@@ -115,9 +115,12 @@ func (p *ProxyDHCP) Close() error {
 		err2 = p.conn4011.Close()
 	}
 	if err1 != nil {
-		return err1
+		return fmt.Errorf("proxydhcp: close :67: %w", err1)
 	}
-	return err2
+	if err2 != nil {
+		return fmt.Errorf("proxydhcp: close :4011: %w", err2)
+	}
+	return nil
 }
 
 func (p *ProxyDHCP) serve(conn *net.UDPConn, port int) {
@@ -274,10 +277,10 @@ func (p *ProxyDHCP) handle(conn *net.UDPConn, req []byte, src *net.UDPAddr, port
 	if ip4 := src.IP.To4(); ip4 != nil && !ip4.Equal(net.IPv4zero) && !broadcast {
 		dst = &net.UDPAddr{IP: ip4, Port: src.Port}
 	}
-    // Send reply
-    if err := conn.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
-        log.Printf("ProxyDHCP:%d: set write deadline error: %v", port, err)
-    }
+	// Send reply
+	if err := conn.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		log.Printf("ProxyDHCP:%d: set write deadline error: %v", port, err)
+	}
 	if n, err := conn.WriteToUDP(resp, dst); err != nil {
 		log.Printf("ProxyDHCP write: %v", err)
 	} else {

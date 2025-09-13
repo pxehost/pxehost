@@ -41,7 +41,7 @@ type Server struct {
 
 func (s *Server) StartAsync() error {
 	if s.UpstreamBase == "" {
-		return errors.New("tftp: UpstreamBase must be set")
+		return fmt.Errorf("tftp: UpstreamBase must be set")
 	}
 	// Normalize base to ensure it ends with '/'
 	if !strings.HasSuffix(s.UpstreamBase, "/") {
@@ -49,11 +49,11 @@ func (s *Server) StartAsync() error {
 	}
 	addr, err := net.ResolveUDPAddr("udp4", ":69")
 	if err != nil {
-		return err
+		return fmt.Errorf("tftp: resolve :69: %w", err)
 	}
 	c, err := net.ListenUDP("udp4", addr)
 	if err != nil {
-		return err
+		return fmt.Errorf("tftp: listen :69: %w", err)
 	}
 	s.conn = c
 	s.logf("listening on UDP :69, proxying to %s", s.UpstreamBase)
@@ -63,7 +63,9 @@ func (s *Server) StartAsync() error {
 
 func (s *Server) Close() error {
 	if s.conn != nil {
-		return s.conn.Close()
+		if err := s.conn.Close(); err != nil {
+			return fmt.Errorf("tftp: close listener: %w", err)
+		}
 	}
 	return nil
 }
@@ -174,7 +176,9 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
 		s.sendError(client, 1, "file not found")
 		return
 	}
-	defer body.Close()
+	defer func() {
+		_ = body.Close()
+	}()
 
 	// Create session socket bound to ephemeral port
 	sessConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
@@ -183,7 +187,9 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
 		s.sendError(client, 0, "internal error")
 		return
 	}
-	defer sessConn.Close()
+	defer func() {
+		_ = sessConn.Close()
+	}()
 	s.logf("sid=%d session started laddr=%s raddr=%s size=%d", sid, sessConn.LocalAddr().String(), client.String(), size)
 
 	// Option negotiation: if client requested options, send OACK for tsize/blksize
@@ -199,15 +205,15 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
 		}
 		s.logf("sid=%d oack request opts=%v respond=%v", sid, opts, oackMap)
 		oack := buildOACK(oackMap)
-        if err := sessConn.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
-            s.logf("sid=%d set write deadline (OACK) error: %v", sid, err)
-        }
+		if err := sessConn.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
+			s.logf("sid=%d set write deadline (OACK) error: %v", sid, err)
+		}
 		_, _ = sessConn.WriteToUDP(oack, client)
 		// Wait for ACK block 0
 		buf := make([]byte, 1500)
-        if err := sessConn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
-            s.logf("sid=%d set read deadline (OACK ACK wait) error: %v", sid, err)
-        }
+		if err := sessConn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+			s.logf("sid=%d set read deadline (OACK ACK wait) error: %v", sid, err)
+		}
 		n, raddr, err := sessConn.ReadFromUDP(buf)
 		if err != nil || raddr == nil || !raddr.IP.Equal(client.IP) || raddr.Port != client.Port {
 			s.logf("sid=%d no ACK(0) after OACK from %s err=%v", sid, client.String(), err)
@@ -227,11 +233,14 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
 	for {
 		// Read next chunk
 		n, rerr := io.ReadFull(body, tmp)
-		if rerr == io.ErrUnexpectedEOF {
-			// last partial block
-		} else if rerr == io.EOF {
+		switch rerr {
+		case io.ErrUnexpectedEOF:
+			// last partial block; use n as is
+		case io.EOF:
 			n = 0
-		} else if rerr != nil && rerr != io.ErrUnexpectedEOF {
+		case nil:
+			// ok
+		default:
 			s.logf("sid=%d read error from upstream: %v", sid, rerr)
 			s.sendError(client, 0, "read error")
 			return
@@ -248,9 +257,9 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
 		const maxRetry = 5
 		acked := false
 		for attempt := 0; attempt < maxRetry; attempt++ {
-            if err := sessConn.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
-                s.logf("sid=%d set write deadline (DATA) error: %v", sid, err)
-            }
+			if err := sessConn.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
+				s.logf("sid=%d set write deadline (DATA) error: %v", sid, err)
+			}
 			if _, err := sessConn.WriteToUDP(pkt, client); err != nil {
 				s.logf("sid=%d write error to %s: %v", sid, client.String(), err)
 				// retry on transient errors; next attempt will resend
@@ -258,9 +267,9 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
 			}
 			// Wait for ACK
 			buf := make([]byte, 1500)
-            if err := sessConn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
-                s.logf("sid=%d set read deadline (ACK wait) error: %v", sid, err)
-            }
+			if err := sessConn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+				s.logf("sid=%d set read deadline (ACK wait) error: %v", sid, err)
+			}
 			n, raddr, err := sessConn.ReadFromUDP(buf)
 			if err != nil {
 				if attempt+1 < maxRetry {
@@ -317,9 +326,9 @@ func (s *Server) sendError(dst *net.UDPAddr, code int, msg string) {
 	b[2] = byte(code >> 8)
 	b[3] = byte(code)
 	copy(b[4:], []byte(msg))
-    if err := s.conn.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
-        s.logf("set write deadline (ERROR pkt) error: %v", err)
-    }
+	if err := s.conn.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		s.logf("set write deadline (ERROR pkt) error: %v", err)
+	}
 	_, _ = s.conn.WriteToUDP(b, dst)
 	s.logf("sent ERROR to %s code=%d msg=%q", dst.String(), code, msg)
 }
@@ -340,16 +349,16 @@ func buildOACK(kv map[string]string) []byte {
 func fetch(ctx context.Context, url string) (io.ReadCloser, int64, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, fmt.Errorf("new request: %w", err)
 	}
 	// Use default client with a per-request context timeout
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, fmt.Errorf("http do: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
-		return nil, 0, fmt.Errorf("unexpected status: %s", resp.Status)
+		_ = resp.Body.Close()
+		return nil, 0, fmt.Errorf("fetch %s: unexpected status: %s", url, resp.Status)
 	}
 	return resp.Body, resp.ContentLength, nil
 }
