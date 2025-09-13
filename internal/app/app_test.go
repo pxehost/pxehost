@@ -3,6 +3,7 @@ package app
 import (
 	"bufio"
 	"bytes"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -20,27 +21,32 @@ import (
 )
 
 // mappedProvider implements tftp.BootfileProvider by mapping
-// requested filenames to actual file paths on disk.
+// requested filenames to in-memory random bytes.
 type mappedProvider struct {
-	files map[string]string // requested name -> real path
+	files map[string][]byte // requested name -> bytes
 }
 
-func (p mappedProvider) GetBootfile(filename string) (io.ReadCloser, int64, error) {
-	path, ok := p.files[filename]
+// AddRandom generates cryptographically random bytes of the given length,
+// stores them under the provided filename, and returns a copy for verification.
+func (p *mappedProvider) AddRandom(filename string, n int) ([]byte, error) {
+	if p.files == nil {
+		p.files = make(map[string][]byte)
+	}
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return nil, err
+	}
+	// Store a copy to avoid external mutation.
+	p.files[filename] = append([]byte(nil), b...)
+	return b, nil
+}
+
+func (p *mappedProvider) GetBootfile(filename string) (io.ReadCloser, int64, error) {
+	b, ok := p.files[filename]
 	if !ok {
 		return nil, 0, fmt.Errorf("file not found: %s", filename)
 	}
-
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, 0, err
-	}
-	st, err := f.Stat()
-	if err != nil {
-		f.Close()
-		return nil, 0, err
-	}
-	return f, st.Size(), nil
+	return io.NopCloser(bytes.NewReader(b)), int64(len(b)), nil
 }
 
 // TestReplayAndTFTP starts the app, replays DHCP/PXE packets from capture,
@@ -54,15 +60,14 @@ func TestReplayAndTFTP(t *testing.T) {
 		t.Fatalf("stat capture: %v", err)
 	}
 
-	// Bootfile used for TFTP manual transfer
+	// Bootfile used for TFTP manual transfer: random bytes of a given length.
 	const reqName = "netboot.xyz.kpxe"
-	const realPath = "/Users/shane/Downloads/netboot.xyz.kpxe"
-	if _, err := os.Stat(realPath); errors.Is(err, os.ErrNotExist) {
-		t.Skipf("bootfile not found: %s (skipping)", filepath.Clean(realPath))
-	} else if err != nil {
-		t.Fatalf("stat bootfile: %v", err)
+	const randomLen = 4097 // spans multiple 512B blocks to exercise TFTP
+	provider := &mappedProvider{}
+	want, err := provider.AddRandom(reqName, randomLen)
+	if err != nil {
+		t.Fatalf("generate random bootfile bytes: %v", err)
 	}
-	provider := mappedProvider{files: map[string]string{reqName: realPath}}
 
 	// Client UDP for DHCP/PXE so broadcasts reply to known port.
 	dhcpPXEConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
@@ -275,10 +280,6 @@ func TestReplayAndTFTP(t *testing.T) {
 	}
 
 	// Manual TFTP transfer
-	want, rerr := os.ReadFile(realPath)
-	if rerr != nil {
-		t.Fatalf("read bootfile: %v", rerr)
-	}
 	client, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
 	if err != nil {
 		t.Fatalf("tftp client listen: %v", err)
