@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/srcreigh/pxehost/internal/app"
+	"github.com/srcreigh/pxehost/internal/tftp"
 )
 
 func main() {
@@ -22,11 +23,14 @@ func main() {
 	}
 	log.Printf("Detected outbound IP: %s", lanIP)
 
+	// Default bootfile provider: HTTP upstream
+	provider := tftp.NewHTTPProvider("https://boot.netboot.xyz/ipxe/")
+
 	cfg := app.NewConfig(
 		app.WithDHCPPort(67),
 		app.WithPXEPort(4011),
 		app.WithTFTPPort(69),
-		app.WithTFTPUpstreamBase("https://boot.netboot.xyz/ipxe/"),
+		app.WithBootfileProvider(provider),
 		app.WithAdvertisedIP(lanIP),
 		app.WithGeteuid(os.Geteuid),
 	)

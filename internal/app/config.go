@@ -1,17 +1,20 @@
 package app
 
-import "github.com/srcreigh/pxehost/internal/capture"
+import (
+	"github.com/srcreigh/pxehost/internal/capture"
+	"github.com/srcreigh/pxehost/internal/tftp"
+)
 
 // Config holds runtime configuration for the PXE host and its dependencies.
 // Construct via functional options for testability.
 type Config struct {
-	DHCPPort         int                  // DHCP/ProxyDHCP listen port (typically 67)
-	ProxyDHCPPort    int                  // PXE service listen port (typically 4011)
-	TFTPPort         int                  // TFTP listen port (typically 69)
-	TFTPUpstreamBase string               // e.g. https://boot.netboot.xyz/ipxe/
-	AdvertisedIP     string               // IPv4 advertised to clients (TFTP server IP)
-	PacketLog        capture.PacketLogger // optional: packet logger implementation
-	Geteuid          func() int           // used for permission checks
+	DHCPPort         int                   // DHCP/ProxyDHCP listen port (typically 67)
+	ProxyDHCPPort    int                   // PXE service listen port (typically 4011)
+	TFTPPort         int                   // TFTP listen port (typically 69)
+	BootfileProvider tftp.BootfileProvider // supplies bootfiles for TFTP server
+	AdvertisedIP     string                // IPv4 advertised to clients (TFTP server IP)
+	PacketLog        capture.PacketLogger  // optional: packet logger implementation
+	Geteuid          func() int            // used for permission checks
 }
 
 // Option mutates a Config value.
@@ -37,8 +40,10 @@ func WithPXEPort(p int) Option { return func(c *Config) { c.ProxyDHCPPort = p } 
 // WithTFTPPort sets the TFTP listen port.
 func WithTFTPPort(p int) Option { return func(c *Config) { c.TFTPPort = p } }
 
-// WithTFTPUpstreamBase sets the upstream base URL used by the TFTP proxy server.
-func WithTFTPUpstreamBase(s string) Option { return func(c *Config) { c.TFTPUpstreamBase = s } }
+// WithBootfileProvider sets the provider used by the TFTP server to fetch files.
+func WithBootfileProvider(p tftp.BootfileProvider) Option {
+	return func(c *Config) { c.BootfileProvider = p }
+}
 
 // WithAdvertisedIP sets the IPv4 address advertised to clients (TFTP server IP).
 func WithAdvertisedIP(ip string) Option { return func(c *Config) { c.AdvertisedIP = ip } }

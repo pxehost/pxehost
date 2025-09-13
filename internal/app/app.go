@@ -54,12 +54,12 @@ func (a *App) Start() error {
 	if a.cfg.AdvertisedIP == "" {
 		return fmt.Errorf("missing AdvertisedIP in config")
 	}
-	if a.cfg.TFTPUpstreamBase == "" {
-		return fmt.Errorf("missing TFTPUpstreamBase in config")
+	if a.cfg.BootfileProvider == nil {
+		return fmt.Errorf("missing BootfileProvider in config")
 	}
 
 	// Start TFTP proxy
-	a.tftps = &tftp.Server{UpstreamBase: a.cfg.TFTPUpstreamBase, Port: a.cfg.TFTPPort, PacketLog: a.cfg.PacketLog}
+	a.tftps = &tftp.Server{Provider: a.cfg.BootfileProvider, Port: a.cfg.TFTPPort, PacketLog: a.cfg.PacketLog}
 	if err := a.tftps.StartAsync(); err != nil {
 		return fmt.Errorf("tftp server start: %w", err)
 	}

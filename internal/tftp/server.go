@@ -1,13 +1,11 @@
 package tftp
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net"
-	"net/http"
 	"path"
 	"strings"
 	"sync/atomic"
@@ -29,10 +27,8 @@ import (
 // binaries; it is not a full TFTP implementation.
 
 type Server struct {
-	// UpstreamBase is the HTTP(S) base used to fetch files, e.g.
-	// "https://boot.netboot.xyz/ipxe/". The requested filename will be joined
-	// to this base and fetched via GET.
-	UpstreamBase string
+	// Provider supplies bootfiles by name.
+	Provider BootfileProvider
 
 	// Logger is optional. If nil, the package-level log.Printf is used.
 	Logger *log.Logger
@@ -47,12 +43,8 @@ type Server struct {
 }
 
 func (s *Server) StartAsync() error {
-	if s.UpstreamBase == "" {
-		return fmt.Errorf("tftp: UpstreamBase must be set")
-	}
-	// Normalize base to ensure it ends with '/'
-	if !strings.HasSuffix(s.UpstreamBase, "/") {
-		s.UpstreamBase += "/"
+	if s.Provider == nil {
+		return fmt.Errorf("tftp: Provider must be set")
 	}
 	addr, err := net.ResolveUDPAddr("udp4", fmt.Sprintf(":%d", s.Port))
 	if err != nil {
@@ -63,7 +55,7 @@ func (s *Server) StartAsync() error {
 		return fmt.Errorf("tftp: listen :%d: %w", s.Port, err)
 	}
 	s.conn = c
-	s.logf("listening on UDP :%d, proxying to %s", s.Port, s.UpstreamBase)
+	s.logf("listening on UDP :%d", s.Port)
 	go s.serve()
 	return nil
 }
@@ -187,16 +179,13 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
 
 	// Sanitize path: avoid path traversal; use last element
 	cleanName := path.Base(strings.TrimLeft(filename, "/\\"))
-	upstream := s.UpstreamBase + cleanName
 
-	s.logf("sid=%d client=%s rrq file=%q clean=%q mode=%s opts=%v upstream=%s", sid, client.String(), filename, cleanName, strings.ToLower(mode), opts, upstream)
+	s.logf("sid=%d client=%s rrq file=%q clean=%q mode=%s opts=%v", sid, client.String(), filename, cleanName, strings.ToLower(mode), opts)
 
-	// Fetch upstream file into memory
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	body, size, err := fetch(ctx, upstream)
+	// Obtain bootfile from provider
+	body, size, err := s.Provider.GetBootfile(cleanName)
 	if err != nil {
-		s.logf("sid=%d fetch failed upstream=%q err=%v", sid, upstream, err)
+		s.logf("sid=%d provider fetch failed file=%q err=%v", sid, cleanName, err)
 		s.sendError(client, 1, "file not found")
 		return
 	}
@@ -446,23 +435,6 @@ func buildOACK(kv map[string]string) []byte {
 		out = append(out, 0)
 	}
 	return out
-}
-
-func fetch(ctx context.Context, url string) (io.ReadCloser, int64, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, 0, fmt.Errorf("new request: %w", err)
-	}
-	// Use default client with a per-request context timeout
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, 0, fmt.Errorf("http do: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		_ = resp.Body.Close()
-		return nil, 0, fmt.Errorf("fetch %s: unexpected status: %s", url, resp.Status)
-	}
-	return resp.Body, resp.ContentLength, nil
 }
 
 // logf logs via the server's Logger if provided, else the package logger.
