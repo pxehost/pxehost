@@ -22,6 +22,12 @@ type Config struct {
 	// DHCPBroadcastPort sets the UDP port used for DHCP broadcast replies.
 	// Useful for tests where the client listens on a specific port.
 	DHCPBroadcastPort int
+
+	// Optional prebound sockets for privileged ports. When provided,
+	// services will use these instead of binding themselves, allowing
+	// the process to drop privileges after binding.
+	PreboundDHCPConn *net.UDPConn // UDP/67
+	PreboundTFTPConn *net.UDPConn // UDP/69
 }
 
 // Option mutates a Config value.
@@ -66,3 +72,13 @@ func WithLogger(l *slog.Logger) Option { return func(c *Config) { c.Logger = l }
 
 // WithDHCPBroadcastPort sets the UDP port used for DHCP broadcast replies.
 func WithDHCPBroadcastPort(p int) Option { return func(c *Config) { c.DHCPBroadcastPort = p } }
+
+// WithPreboundDHCPConn injects a prebound UDP socket for DHCP (port 67).
+func WithPreboundDHCPConn(conn *net.UDPConn) Option {
+	return func(c *Config) { c.PreboundDHCPConn = conn }
+}
+
+// WithPreboundTFTPConn injects a prebound UDP socket for TFTP (port 69).
+func WithPreboundTFTPConn(conn *net.UDPConn) Option {
+	return func(c *Config) { c.PreboundTFTPConn = conn }
+}
