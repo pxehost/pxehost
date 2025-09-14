@@ -14,27 +14,27 @@ import (
 )
 
 func main() {
+	if os.Geteuid() == 0 {
+		fmt.Println("Running as root is not supported, exiting.")
+		os.Exit(1)
+	}
+
 	// Configure slog default with pretty colorized formatter and source trimming.
 	slog.SetDefault(slog.New(logging.NewPrettyHandler(os.Stderr, &slog.HandlerOptions{AddSource: true})))
 	// Discover LAN IP to advertise to PXE clients.
-	lanIP := net.IPv4zero
-	if ip, err := outboundIP(); err == nil {
-		lanIP = ip
-	} else {
+	lanIP, err := outboundIP()
+	if err != nil {
 		slog.Error("Error detecting outbound IP", "err", err)
 		os.Exit(1)
 	}
 	slog.Info("Detected outbound IP", "ip", lanIP.String())
-
-	// Default bootfile provider: HTTP upstream
-	provider := tftp.NewHTTPProvider("https://boot.netboot.xyz/ipxe/")
 
 	cfg := app.NewConfig(
 		app.WithDHCPPort(67),
 		app.WithDHCPBroadcastPort(68),
 		app.WithPXEPort(4011),
 		app.WithTFTPPort(69),
-		app.WithBootfileProvider(provider),
+		app.WithBootfileProvider(tftp.NewHTTPProvider("https://boot.netboot.xyz/ipxe/")),
 		app.WithAdvertisedIP(lanIP),
 		app.WithGeteuid(os.Geteuid),
 		app.WithLogger(slog.Default()),

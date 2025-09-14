@@ -30,25 +30,10 @@ func New(cfg *Config) *App {
 	return a
 }
 
-// CheckPrivileges ensures the process has sufficient privileges to bind
-// privileged ports like UDP/67 used by DHCP/ProxyDHCP.
-func (a *App) CheckPrivileges() error {
-	if a == nil || a.EUID == nil {
-		return fmt.Errorf("nil app or EUID dependency")
-	}
-	if a.EUID() != 0 {
-		return fmt.Errorf("must run as root to bind UDP/67 (DHCP)")
-	}
-	return nil
-}
-
 // Start initializes and starts the TFTP proxy and ProxyDHCP services.
 func (a *App) Start() error {
 	if a == nil || a.cfg == nil {
 		return fmt.Errorf("nil app or config")
-	}
-	if err := a.CheckPrivileges(); err != nil {
-		return err
 	}
 	if a.cfg.AdvertisedIP == nil {
 		return fmt.Errorf("missing AdvertisedIP in config")
