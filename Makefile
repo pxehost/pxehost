@@ -1,4 +1,4 @@
-.PHONY: all build clean pxehost
+.PHONY: all build clean pxehost test
 
 all: pxehost
 
@@ -15,3 +15,6 @@ format:
 
 lint:
 	./scripts/lint.sh
+
+test:
+	go test ./...

@@ -108,7 +108,7 @@ func TestReplayAndTFTP(t *testing.T) {
 	pxeRaddr := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: pxePort}
 
 	// DHCP Discover exchange
-	pkt := dhcp.New(1, 0x4e0e64de, net.HardwareAddr{0x18, 0xc0, 0x4d, 0x0e, 0x64, 0xde})
+	pkt := dhcp.NewPacket(1, 0x4e0e64de, net.HardwareAddr{0x18, 0xc0, 0x4d, 0x0e, 0x64, 0xde})
 	pkt.Secs = 4
 	pkt.Flags = 0x8000
 	pkt.WithMsgType(dhcp.DHCPDiscover)
@@ -123,7 +123,7 @@ func TestReplayAndTFTP(t *testing.T) {
 	assertPXEReplyLike(t, reply, dhcp.DHCPOffer, "netboot.xyz.kpxe")
 
 	// DHCP Request exchange
-	pkt = dhcp.New(1, 0x4e0e64de, net.HardwareAddr{0x18, 0xc0, 0x4d, 0x0e, 0x64, 0xde})
+	pkt = dhcp.NewPacket(1, 0x4e0e64de, net.HardwareAddr{0x18, 0xc0, 0x4d, 0x0e, 0x64, 0xde})
 	pkt.Secs = 4
 	pkt.Flags = 0x8000
 	pkt.WithMsgType(3)
@@ -140,7 +140,7 @@ func TestReplayAndTFTP(t *testing.T) {
 	assertPXEReplyLike(t, reply, dhcp.DHCPAck, "netboot.xyz.kpxe")
 
 	// 2nd DHCP Request exchange on PXE port
-	pkt = dhcp.New(1, 0x4e0e64de, net.HardwareAddr{0x18, 0xc0, 0x4d, 0x0e, 0x64, 0xde})
+	pkt = dhcp.NewPacket(1, 0x4e0e64de, net.HardwareAddr{0x18, 0xc0, 0x4d, 0x0e, 0x64, 0xde})
 	pkt.Secs = 4
 	pkt.Ciaddr = net.IPv4(192, 168, 0, 34)
 	pkt.WithMsgType(3)
@@ -276,7 +276,7 @@ func TestReplayAndTFTP(t *testing.T) {
 		t.Fatalf("tftp payload mismatch: got=%d want=%d", len(got), len(want))
 	}
 
-	pkt = dhcp.New(1, 0xd9cc631d, net.HardwareAddr{0x18, 0xc0, 0x4d, 0x0e, 0x64, 0xde})
+	pkt = dhcp.NewPacket(1, 0xd9cc631d, net.HardwareAddr{0x18, 0xc0, 0x4d, 0x0e, 0x64, 0xde})
 	pkt.Secs = 8
 	pkt.Flags = 0x8000
 	pkt.WithMsgType(1)

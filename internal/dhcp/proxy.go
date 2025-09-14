@@ -16,20 +16,10 @@ import (
 
 // DHCP protocol constants and helpers
 const (
-	// Fixed BOOTP/DHCP header lengths and offsets
-	dhcpFixedHeaderLen = 240 // 236-byte BOOTP + 4-byte magic cookie
-	dhcpCookieOffset   = 236
-
-	// BOOTP op codes
-	bootpOpRequest = 1
-	bootpOpReply   = 2
-
 	// BOOTP flags
 	bootpFlagBroadcastMask = 0x8000
 
 	// DHCP option codes (subset used here)
-	optPad              = 0
-	optEnd              = 255
 	optMsgType          = 53
 	optServerID         = 54
 	optVendorClassID    = 60
@@ -52,8 +42,7 @@ const (
 	dhcpMsgNak      = 6
 )
 
-// dhcpMagicCookie contains the fixed RFC2132 cookie ("99,130,83,99").
-var dhcpMagicCookie = [4]byte{99, 130, 83, 99}
+//
 
 // ProxyDHCP is a minimal ProxyDHCP responder (PXE Boot Server Discovery).
 // It binds to UDP ports and advertises TFTP server and bootfile
@@ -216,19 +205,25 @@ func isNetClosed(err error) bool {
 }
 
 func (p *ProxyDHCP) handle(conn *net.UDPConn, req []byte, src *net.UDPAddr, port int) {
-	// Minimal DHCP parse: ensure BOOTP and cookie present, echo xid and chaddr.
-	if len(req) < dhcpFixedHeaderLen || !bytes.Equal(req[dhcpCookieOffset:dhcpCookieOffset+4], dhcpMagicCookie[:]) {
-		p.Logger.Debug("ProxyDHCP ignoring non-DHCP/invalid packet", "port", port, "from", src.String(), "len", len(req))
+	// Parse via DHCP packet module
+	pkt, err := Parse(req)
+	if err != nil {
+		p.Logger.Debug("ProxyDHCP ignoring non-DHCP/invalid packet", "port", port, "from", src.String(), "len", len(req), "err", err)
 		return
 	}
+
+	// Build map[code][]byte for logging and lookups
+	inOpts := make(map[byte][]byte, len(pkt.Options))
+	for _, o := range pkt.Options {
+		inOpts[o.Code] = o.Data
+	}
+	if len(inOpts) > 0 {
+		p.Logger.Debug("ProxyDHCP incoming options", "port", port, "from", src.String(), "options", "\n"+formatDHCPOptions(inOpts))
+	}
+
 	// Only respond to PXE clients when vendor class contains "PXEClient".
 	isPXE := false
-	opts := parseOptions(req[240:])
-	// Log all incoming options in a readable way
-	if len(opts) > 0 {
-		p.Logger.Debug("ProxyDHCP incoming options", "port", port, "from", src.String(), "options", "\n"+formatDHCPOptions(opts))
-	}
-	if v, ok := opts[optVendorClassID]; ok && containsString(v, "PXEClient") {
+	if v, ok := inOpts[OptVendorClassIdent]; ok && containsString(v, "PXEClient") {
 		isPXE = true
 	}
 	if !isPXE {
@@ -239,19 +234,19 @@ func (p *ProxyDHCP) handle(conn *net.UDPConn, req []byte, src *net.UDPAddr, port
 	// Determine incoming DHCP message type (option 53)
 	// If DISCOVER (1) -> respond with OFFER (2)
 	// If REQUEST (3) or others -> respond with ACK (5)
-	respMsgType := byte(dhcpMsgAck) // default ACK
-	if mt, ok := opts[optMsgType]; ok && len(mt) == 1 {
+	respMsgType := byte(DHCPAck) // default ACK
+	if mt, ok := inOpts[OptMsgType]; ok && len(mt) == 1 {
 		switch mt[0] {
-		case dhcpMsgDiscover:
-			respMsgType = dhcpMsgOffer
-		case dhcpMsgRequest:
-			respMsgType = dhcpMsgAck
+		case DHCPDiscover:
+			respMsgType = DHCPOffer
+		case DHCPRequest:
+			respMsgType = DHCPAck
 		}
 	}
 
 	// Determine client architecture (option 93). Default to UEFI x86_64 if unknown.
 	arch := uint16(0x0000)
-	if v, ok := opts[optClientArch]; ok && len(v) >= 2 {
+	if v, ok := inOpts[93]; ok && len(v) >= 2 { // 93 = client arch
 		arch = uint16(v[0])<<8 | uint16(v[1])
 	}
 
@@ -260,7 +255,7 @@ func (p *ProxyDHCP) handle(conn *net.UDPConn, req []byte, src *net.UDPAddr, port
 	bootfile := ""
 	// If client identifies as iPXE via Option 77 (User Class),
 	// provide an iPXE script URL over HTTPS instead of TFTP bootfile.
-	if uc, ok := opts[optUserClass]; ok && bytes.Contains(uc, []byte("iPXE")) {
+	if uc, ok := inOpts[77]; ok && bytes.Contains(uc, []byte("iPXE")) { // 77 = user class
 		bootfile = "https://boot.netboot.xyz/menu.ipxe"
 	} else {
 		// PXE BIOS step -- need to specify TFTP filename.
@@ -274,75 +269,46 @@ func (p *ProxyDHCP) handle(conn *net.UDPConn, req []byte, src *net.UDPAddr, port
 		}
 	}
 
-	// Build BOOTREPLY (op=2) with DHCP OFFER/ACK and options 60,66,67.
-	resp := make([]byte, dhcpFixedHeaderLen)
-	resp[0] = bootpOpReply    // op BOOTREPLY
-	resp[1] = req[1]          // htype
-	resp[2] = req[2]          // hlen
-	resp[3] = 0               // hops
-	copy(resp[4:8], req[4:8]) // xid
-	// secs, flags 0
-	// ciaddr/yiaddr/giaddr zeros for proxy
-	// siaddr: TFTP server IP
-	if ip := net.ParseIP(p.TFTPServerIP).To4(); ip != nil {
-		copy(resp[20:24], ip)
-	}
-	// chaddr
-	copy(resp[28:44], req[28:44])
-	// BOOTP legacy sname/file fields left empty; use option 67 instead
-	// magic cookie
-	copy(resp[dhcpCookieOffset:dhcpCookieOffset+4], dhcpMagicCookie[:])
+	mac := net.HardwareAddr(pkt.Chaddr[:pkt.HLen])
+	respPkt := NewPacket(BootReply, pkt.Xid, mac).
+		WithMsgType(respMsgType).
+		WithVendorClassIdent("PXEClient").
+		WithBootFile(bootfile)
 
-	// Options
-	opt := make([]byte, 0, 128)
-	// DHCP Message Type (53): OFFER (2) or ACK (5)
-	opt = append(opt, optMsgType, 1, respMsgType)
-	// DHCP Server Identifier (54): advertise our address (use TFTPServerIP)
-	if ip := net.ParseIP(p.TFTPServerIP).To4(); ip != nil {
-		opt = append(opt, optServerID, 4)
-		opt = append(opt, ip...)
+	if ip := net.ParseIP(p.TFTPServerIP); ip != nil {
+		respPkt.Siaddr = ip
+		respPkt.WithServerID(ip)
+		respPkt.WithTFTPServer(p.TFTPServerIP)
 	}
-	// Vendor class id (60): PXEClient
-	opt = append(opt, optVendorClassID, byte(len("PXEClient")))
-	opt = append(opt, []byte("PXEClient")...)
-	// TFTP server name (66)
-	if p.TFTPServerIP != "" {
-		opt = append(opt, optTFTPServerName, byte(len(p.TFTPServerIP)))
-		opt = append(opt, []byte(p.TFTPServerIP)...)
-	}
-	// Bootfile name (67)
-	opt = append(opt, optBootfileName, byte(len(bootfile)))
-	opt = append(opt, []byte(bootfile)...)
-	// End option
-	opt = append(opt, optEnd)
-	resp = append(resp, opt...)
 
-	// Log outgoing options in a readable way
-	if len(opt) > 0 {
-		outOpts := parseOptions(opt)
+	// Log outgoing options in a readable way from respPkt.Options
+	if len(respPkt.Options) > 0 {
+		outOpts := make(map[byte][]byte, len(respPkt.Options))
+		for _, o := range respPkt.Options {
+			outOpts[o.Code] = o.Data
+		}
 		p.Logger.Debug("ProxyDHCP outgoing options", "port", port, "to", src.String(), "options", "\n"+formatDHCPOptions(outOpts))
 	}
 
-	// Decide reply destination: broadcast if client has no IP or requests broadcast
+	// Decide reply destination: broadcast if client requested broadcast
 	dst := &net.UDPAddr{IP: net.IPv4bcast, Port: p.DHCPBroadcastPort}
-	// BOOTP flags (broadcast bit 0x8000) at bytes 10-11
-	broadcast := false
-	if len(req) >= 12 {
-		fl := binary.BigEndian.Uint16(req[10:12])
-		broadcast = (fl & bootpFlagBroadcastMask) != 0
-	}
-	// If source has a unicast IPv4 and did not request broadcast, reply unicast
+	broadcast := (pkt.Flags & bootpFlagBroadcastMask) != 0
 	if ip4 := src.IP.To4(); ip4 != nil && !ip4.Equal(net.IPv4zero) && !broadcast {
 		dst = &net.UDPAddr{IP: ip4, Port: src.Port}
 	}
-	// Send reply
+
+	// Serialize and send reply
+	resp, err := respPkt.Serialize()
+	if err != nil {
+		p.Logger.Error("ProxyDHCP serialize error", "err", err)
+		return
+	}
 	if err := conn.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
 		p.Logger.Warn("ProxyDHCP set write deadline error", "port", port, "err", err)
 	}
 	if n, err := conn.WriteToUDP(resp, dst); err != nil {
 		p.Logger.Error("ProxyDHCP write error", "err", err)
 	} else {
-		// Include next-server (siaddr / option 66) for visibility
 		p.Logger.Info("ProxyDHCP reply sent",
 			"port", port,
 			"bytes", n,
@@ -375,30 +341,7 @@ func (p *ProxyDHCP) handle(conn *net.UDPConn, req []byte, src *net.UDPAddr, port
 // logger returns the configured logger or the default slog logger.
 // logger helper removed; ProxyDHCP requires non-nil Logger.
 
-func parseOptions(b []byte) map[byte][]byte {
-	m := make(map[byte][]byte)
-	i := 0
-	for i < len(b) {
-		code := b[i]
-		if code == optPad { // pad
-			i++
-			continue
-		}
-		if code == optEnd { // end
-			break
-		}
-		if i+1 >= len(b) {
-			break
-		}
-		l := int(b[i+1])
-		if i+2+l > len(b) {
-			break
-		}
-		m[code] = b[i+2 : i+2+l]
-		i += 2 + l
-	}
-	return m
-}
+//
 
 // formatDHCPOptions returns a multi-line, human-friendly dump of DHCP options
 // including code, canonical name (if known), decoded value, and raw hex bytes.

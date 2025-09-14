@@ -70,8 +70,8 @@ type Packet struct {
 	Options []Option
 }
 
-// New creates a packet with sane defaults.
-func New(op byte, xid uint32, mac net.HardwareAddr) *Packet {
+// NewPacket creates a packet with sane defaults.
+func NewPacket(op byte, xid uint32, mac net.HardwareAddr) *Packet {
 	var ch [16]byte
 	copy(ch[:], mac)
 	return &Packet{
