@@ -21,6 +21,7 @@ func main() {
 
 	// Configure slog default with pretty colorized formatter and source trimming.
 	slog.SetDefault(slog.New(logging.NewPrettyHandler(os.Stderr, &slog.HandlerOptions{AddSource: true})))
+
 	// Discover LAN IP to advertise to PXE clients.
 	lanIP, err := outboundIP()
 	if err != nil {

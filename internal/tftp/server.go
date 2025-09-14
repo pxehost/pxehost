@@ -42,6 +42,31 @@ type Server struct {
 	PacketLog capture.PacketLogger
 }
 
+// logPacket captures a UDP packet via PacketLog using addressing derived from
+// the provided local UDP connection and the given remote address. No-ops if
+// PacketLog is nil or inputs are incomplete. Payload is defensively copied.
+func (s *Server) logPacket(conn *net.UDPConn, dir capture.Direction, remote *net.UDPAddr, note string, payload []byte) {
+	if s == nil || s.PacketLog == nil || conn == nil || remote == nil {
+		return
+	}
+	lip := ""
+	lport := 0
+	if la, ok := conn.LocalAddr().(*net.UDPAddr); ok && la != nil {
+		lip = la.IP.String()
+		lport = la.Port
+	}
+	// Copy payload to decouple from caller's buffer reuse
+	cp := append([]byte(nil), payload...)
+	s.PacketLog.Log(capture.MakePacket(
+		dir,
+		"TFTP",
+		lip, lport,
+		remote.IP.String(), remote.Port,
+		note,
+		cp,
+	))
+}
+
 func (s *Server) StartAsync() error {
 	if s.Provider == nil {
 		return fmt.Errorf("tftp: Provider must be set")
@@ -97,22 +122,7 @@ func (s *Server) serve() {
 			return
 		}
 		// Packet capture: inbound request to port 69
-		if s.PacketLog != nil {
-			lip := ""
-			lport := 0
-			if la, ok := s.conn.LocalAddr().(*net.UDPAddr); ok && la != nil {
-				lip = la.IP.String()
-				lport = la.Port
-			}
-			s.PacketLog.Log(capture.MakePacket(
-				capture.DirIn,
-				"TFTP",
-				lip, lport,
-				raddr.IP.String(), raddr.Port,
-				"rrq",
-				append([]byte(nil), buf[:n]...),
-			))
-		}
+		s.logPacket(s.conn, capture.DirIn, raddr, "rrq", buf[:n])
 		// Handle each request in its own goroutine
 		pkt := make([]byte, n)
 		copy(pkt, buf[:n])
@@ -238,21 +248,8 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
 		if err := sessConn.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
 			s.logf(slog.LevelWarn, "sid=%d set write deadline (OACK) error: %v", sid, err)
 		}
-		if _, err := sessConn.WriteToUDP(oack, client); err == nil && s.PacketLog != nil {
-			lip := ""
-			lport := 0
-			if la, ok := sessConn.LocalAddr().(*net.UDPAddr); ok && la != nil {
-				lip = la.IP.String()
-				lport = la.Port
-			}
-			s.PacketLog.Log(capture.MakePacket(
-				capture.DirOut,
-				"TFTP",
-				lip, lport,
-				client.IP.String(), client.Port,
-				"oack",
-				append([]byte(nil), oack...),
-			))
+		if _, err := sessConn.WriteToUDP(oack, client); err == nil {
+			s.logPacket(sessConn, capture.DirOut, client, "oack", oack)
 		}
 		// Wait for ACK block 0
 		buf := make([]byte, 1500)
@@ -269,22 +266,7 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
 		} else if n >= 4 && (int(buf[0])<<8|int(buf[1])) == opACK && int(buf[2]) == 0 && int(buf[3]) == 0 {
 			// ok
 			s.logf(slog.LevelDebug, "sid=%d received ACK(0) after OACK", sid)
-			if s.PacketLog != nil {
-				lip := ""
-				lport := 0
-				if la, ok := sessConn.LocalAddr().(*net.UDPAddr); ok && la != nil {
-					lip = la.IP.String()
-					lport = la.Port
-				}
-				s.PacketLog.Log(capture.MakePacket(
-					capture.DirIn,
-					"TFTP",
-					lip, lport,
-					raddr.IP.String(), raddr.Port,
-					"ack(0)",
-					append([]byte(nil), buf[:n]...),
-				))
-			}
+			s.logPacket(sessConn, capture.DirIn, raddr, "ack(0)", buf[:n])
 		}
 	}
 
@@ -329,22 +311,7 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
 				// retry on transient errors; next attempt will resend
 				continue
 			}
-			if s.PacketLog != nil {
-				lip := ""
-				lport := 0
-				if la, ok := sessConn.LocalAddr().(*net.UDPAddr); ok && la != nil {
-					lip = la.IP.String()
-					lport = la.Port
-				}
-				s.PacketLog.Log(capture.MakePacket(
-					capture.DirOut,
-					"TFTP",
-					lip, lport,
-					client.IP.String(), client.Port,
-					fmt.Sprintf("data(block=%d)", blockNum),
-					append([]byte(nil), pkt...),
-				))
-			}
+			s.logPacket(sessConn, capture.DirOut, client, fmt.Sprintf("data(block=%d)", blockNum), pkt)
 			// Wait for ACK
 			buf := make([]byte, 1500)
 			if err := sessConn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
@@ -366,22 +333,7 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
 			if n >= 4 && (int(buf[0])<<8|int(buf[1])) == opACK {
 				ackNum := uint16(buf[2])<<8 | uint16(buf[3])
 				if ackNum == blockNum {
-					if s.PacketLog != nil {
-						lip := ""
-						lport := 0
-						if la, ok := sessConn.LocalAddr().(*net.UDPAddr); ok && la != nil {
-							lip = la.IP.String()
-							lport = la.Port
-						}
-						s.PacketLog.Log(capture.MakePacket(
-							capture.DirIn,
-							"TFTP",
-							lip, lport,
-							raddr.IP.String(), raddr.Port,
-							fmt.Sprintf("ack(%d)", ackNum),
-							append([]byte(nil), buf[:n]...),
-						))
-					}
+					s.logPacket(sessConn, capture.DirIn, raddr, fmt.Sprintf("ack(%d)", ackNum), buf[:n])
 					acked = true
 					break // proceed to next block
 				}
@@ -425,21 +377,8 @@ func (s *Server) sendError(dst *net.UDPAddr, code int, msg string) {
 	if err := s.conn.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
 		s.logf(slog.LevelWarn, "set write deadline (ERROR pkt) error: %v", err)
 	}
-	if _, err := s.conn.WriteToUDP(b, dst); err == nil && s.PacketLog != nil {
-		lip := ""
-		lport := 0
-		if la, ok := s.conn.LocalAddr().(*net.UDPAddr); ok && la != nil {
-			lip = la.IP.String()
-			lport = la.Port
-		}
-		s.PacketLog.Log(capture.MakePacket(
-			capture.DirOut,
-			"TFTP",
-			lip, lport,
-			dst.IP.String(), dst.Port,
-			"error",
-			append([]byte(nil), b...),
-		))
+	if _, err := s.conn.WriteToUDP(b, dst); err == nil {
+		s.logPacket(s.conn, capture.DirOut, dst, "error", b)
 	}
 	s.logf(slog.LevelInfo, "sent ERROR to %s code=%d msg=%q", dst.String(), code, msg)
 }
