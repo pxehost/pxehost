@@ -23,11 +23,6 @@ type ProxyDHCP struct {
 	conn     *net.UDPConn
 	conn4011 *net.UDPConn
 
-	// PreboundDHCP, when set, is an already-bound UDP socket for the
-	// DHCP port (usually 67). If provided, StartAsync will use it
-	// instead of binding the port itself.
-	PreboundDHCP *net.UDPConn
-
 	DHCPPort int // canonically 67
 	PXEPort  int // canonically 4011
 
@@ -46,19 +41,13 @@ func (p *ProxyDHCP) StartAsync() error {
 	dhcpPort := p.DHCPPort
 	pxePort := p.PXEPort
 	// Bind IPv4-only to receive IPv4 DHCP broadcasts
-	var c67 *net.UDPConn
-	if p.PreboundDHCP != nil {
-		c67 = p.PreboundDHCP
-	} else {
-		addr67, err := net.ResolveUDPAddr("udp4", ":"+itoa(dhcpPort))
-		if err != nil {
-			return fmt.Errorf("proxydhcp: resolve :%d: %w", dhcpPort, err)
-		}
-		c, err := net.ListenUDP("udp4", addr67)
-		if err != nil {
-			return fmt.Errorf("proxydhcp: listen :%d: %w", dhcpPort, err)
-		}
-		c67 = c
+	addr67, err := net.ResolveUDPAddr("udp4", ":"+itoa(dhcpPort))
+	if err != nil {
+		return fmt.Errorf("proxydhcp: resolve :%d: %w", dhcpPort, err)
+	}
+	c67, err := net.ListenUDP("udp4", addr67)
+	if err != nil {
+		return fmt.Errorf("proxydhcp: listen :%d: %w", dhcpPort, err)
 	}
 	// Bind PXE service port (required)
 	addr4011, err := net.ResolveUDPAddr("udp4", ":"+itoa(pxePort))

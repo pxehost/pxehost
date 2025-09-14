@@ -30,13 +30,25 @@ func New(cfg *Config) *App {
 	return a
 }
 
+// CheckPrivileges ensures the process has sufficient privileges to bind
+// privileged ports like UDP/67 used by DHCP/ProxyDHCP.
+func (a *App) CheckPrivileges() error {
+	if a == nil || a.EUID == nil {
+		return fmt.Errorf("nil app or EUID dependency")
+	}
+	if a.EUID() != 0 {
+		return fmt.Errorf("must run as root to bind UDP/67 (DHCP)")
+	}
+	return nil
+}
+
 // Start initializes and starts the TFTP proxy and ProxyDHCP services.
 func (a *App) Start() error {
 	if a == nil || a.cfg == nil {
 		return fmt.Errorf("nil app or config")
 	}
-	if os.Geteuid() == 0 {
-		return fmt.Errorf("refusing to start services as root")
+	if err := a.CheckPrivileges(); err != nil {
+		return err
 	}
 	if a.cfg.AdvertisedIP == nil {
 		return fmt.Errorf("missing AdvertisedIP in config")
@@ -49,7 +61,7 @@ func (a *App) Start() error {
 	}
 
 	// Start TFTP proxy
-	a.tftps = &tftp.Server{Provider: a.cfg.BootfileProvider, Port: a.cfg.TFTPPort, PacketLog: a.cfg.PacketLog, Logger: a.cfg.Logger, ListenConn: a.cfg.PreboundTFTPConn}
+	a.tftps = &tftp.Server{Provider: a.cfg.BootfileProvider, Port: a.cfg.TFTPPort, PacketLog: a.cfg.PacketLog, Logger: a.cfg.Logger}
 	if err := a.tftps.StartAsync(); err != nil {
 		return fmt.Errorf("tftp server start: %w", err)
 	}
@@ -62,7 +74,6 @@ func (a *App) Start() error {
 		PacketLog:         a.cfg.PacketLog,
 		DHCPBroadcastPort: a.cfg.DHCPBroadcastPort,
 		Logger:            a.cfg.Logger,
-		PreboundDHCP:      a.cfg.PreboundDHCPConn,
 	}
 	if err := a.proxy.StartAsync(); err != nil {
 		_ = a.tftps.Close()

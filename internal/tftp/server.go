@@ -40,11 +40,6 @@ type Server struct {
 
 	// PacketLog, when non-nil, receives JSONL entries for UDP packets.
 	PacketLog capture.PacketLogger
-
-	// ListenConn, when set, is an already-bound UDP socket to use
-	// instead of binding to Port. Useful for binding privileged ports
-	// before dropping privileges.
-	ListenConn *net.UDPConn
 }
 
 func (s *Server) StartAsync() error {
@@ -54,25 +49,16 @@ func (s *Server) StartAsync() error {
 	if s.Logger == nil {
 		return fmt.Errorf("tftp: Logger must be set")
 	}
-	if s.ListenConn != nil {
-		s.conn = s.ListenConn
-	} else {
-		addr, err := net.ResolveUDPAddr("udp4", fmt.Sprintf(":%d", s.Port))
-		if err != nil {
-			return fmt.Errorf("tftp: resolve :%d: %w", s.Port, err)
-		}
-		c, err := net.ListenUDP("udp4", addr)
-		if err != nil {
-			return fmt.Errorf("tftp: listen :%d: %w", s.Port, err)
-		}
-		s.conn = c
+	addr, err := net.ResolveUDPAddr("udp4", fmt.Sprintf(":%d", s.Port))
+	if err != nil {
+		return fmt.Errorf("tftp: resolve :%d: %w", s.Port, err)
 	}
-	// Log actual bound port
-	bound := s.Port
-	if la, ok := s.conn.LocalAddr().(*net.UDPAddr); ok && la != nil {
-		bound = la.Port
+	c, err := net.ListenUDP("udp4", addr)
+	if err != nil {
+		return fmt.Errorf("tftp: listen :%d: %w", s.Port, err)
 	}
-	s.logf(slog.LevelInfo, "listening on UDP :%d", bound)
+	s.conn = c
+	s.logf(slog.LevelInfo, "listening on UDP :%d", s.Port)
 	go s.serve()
 	return nil
 }
