@@ -324,8 +324,7 @@ func (p *ProxyDHCP) handle(conn *net.UDPConn, req []byte, src *net.UDPAddr, port
 	}
 
 	// Decide reply destination: broadcast if client has no IP or requests broadcast
-	dstPort := p.DHCPBroadcastPort
-	dst := &net.UDPAddr{IP: net.IPv4bcast, Port: dstPort}
+	dst := &net.UDPAddr{IP: net.IPv4bcast, Port: p.DHCPBroadcastPort}
 	// BOOTP flags (broadcast bit 0x8000) at bytes 10-11
 	broadcast := false
 	if len(req) >= 12 {

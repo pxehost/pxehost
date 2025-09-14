@@ -31,6 +31,7 @@ func main() {
 
 	cfg := app.NewConfig(
 		app.WithDHCPPort(67),
+		app.WithDHCPBroadcastPort(68),
 		app.WithPXEPort(4011),
 		app.WithTFTPPort(69),
 		app.WithBootfileProvider(provider),

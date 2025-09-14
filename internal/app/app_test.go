@@ -1,23 +1,16 @@
 package app
 
 import (
-	"bufio"
 	"bytes"
 	"crypto/rand"
-	"encoding/base64"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
-	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
-	"github.com/srcreigh/pxehost/internal/capture"
+	"github.com/srcreigh/pxehost/internal/dhcp"
 )
 
 // mappedProvider implements tftp.BootfileProvider by mapping
@@ -52,14 +45,6 @@ func (p *mappedProvider) GetBootfile(filename string) (io.ReadCloser, int64, err
 // TestReplayAndTFTP starts the app, replays DHCP/PXE packets from capture,
 // and performs a manual TFTP transfer (two RRQs with ACKs) verifying bytes.
 func TestReplayAndTFTP(t *testing.T) {
-	// Hardcoded capture path. Skip test if file missing.
-	const capturePath = "/Users/shane/packetlog.json"
-	if _, err := os.Stat(capturePath); errors.Is(err, os.ErrNotExist) {
-		t.Skipf("capture file not found: %s (skipping)", filepath.Clean(capturePath))
-	} else if err != nil {
-		t.Fatalf("stat capture: %v", err)
-	}
-
 	// Bootfile used for TFTP manual transfer: random bytes of a given length.
 	const reqName = "netboot.xyz.kpxe"
 	const randomLen = 4097 // spans multiple 512B blocks to exercise TFTP
@@ -117,167 +102,57 @@ func TestReplayAndTFTP(t *testing.T) {
 		t.Fatalf("server ports not bound tftp=%d dhcp=%d pxe=%d", tftpPort, dhcpPort, pxePort)
 	}
 
-	type flowKey string
-	const (
-		flowDHCP flowKey = "dhcp"
-		flowPXE  flowKey = "pxe"
-	)
-	conns := map[flowKey]*net.UDPConn{}
-	conns[flowDHCP] = dhcpPXEConn
-	conns[flowPXE] = dhcpPXEConn
+	// Use a single UDP conn for send/receive.
+	c := dhcpPXEConn
+	dhcpRaddr := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: dhcpPort}
+	pxeRaddr := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: pxePort}
 
-	getConn := func(f flowKey) *net.UDPConn {
-		if c := conns[f]; c != nil {
-			return c
-		}
-		c, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
-		if err != nil {
-			t.Fatalf("listen udp client for %s: %v", f, err)
-		}
-		conns[f] = c
-		t.Cleanup(func() { _ = c.Close() })
-		return c
-	}
+	// DHCP Discover exchange
+	pkt := dhcp.New(1, 0x4e0e64de, net.HardwareAddr{0x18, 0xc0, 0x4d, 0x0e, 0x64, 0xde})
+	pkt.Secs = 4
+	pkt.Flags = 0x8000
+	pkt.WithMsgType(dhcp.DHCPDiscover)
+	pkt.WithParamRequestList(0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x0b, 0x0c, 0x0d, 0x0f, 0x10, 0x11, 0x12, 0x16, 0x17, 0x1c, 0x28, 0x29, 0x2a, 0x2b, 0x32, 0x33, 0x36, 0x3a, 0x3b, 0x3c, 0x42, 0x43, 0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87)
+	pkt.WithMaxMessageSize(1260)
+	pkt.WithClientMachineID([]byte{0x00, 0x18, 0x02, 0xc0, 0x03, 0x4d, 0x04, 0x0e, 0x05, 0x64, 0x06, 0xde, 0x07, 0x00, 0x08, 0x00, 0x09})
+	pkt.WithArch(0)
+	pkt.WithNIC([]byte{0x01, 0x02, 0x01})
+	pkt.WithVendorClassIdent("PXEClient:Arch:00000:UNDI:002001")
 
-	lastFlow := map[string]flowKey{}
+	reply := SendPacketAndRead(t, c, dhcpRaddr, pkt)
+	assertPXEReplyLike(t, reply, dhcp.DHCPOffer, "netboot.xyz.kpxe")
 
-	type compCtx struct {
-		lastInLine   int
-		lastInSize   int
-		lastInNote   string
-		lastLocal    string
-		lastRemote   string
-		lastInPrefix string
-	}
-	ctxByComp := map[string]*compCtx{}
+	// DHCP Request exchange
+	pkt = dhcp.New(1, 0x4e0e64de, net.HardwareAddr{0x18, 0xc0, 0x4d, 0x0e, 0x64, 0xde})
+	pkt.Secs = 4
+	pkt.Flags = 0x8000
+	pkt.WithMsgType(3)
+	pkt.WithRequestedIP(net.IPv4(192, 168, 0, 34))
+	pkt.WithParamRequestList(0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x0b, 0x0c, 0x0d, 0x0f, 0x10, 0x11, 0x12, 0x16, 0x17, 0x1c, 0x28, 0x29, 0x2a, 0x2b, 0x32, 0x33, 0x36, 0x3a, 0x3b, 0x3c, 0x42, 0x43, 0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87)
+	pkt.WithMaxMessageSize(1260)
+	pkt.WithServerID(net.IPv4(192, 168, 0, 1))
+	pkt.WithClientMachineID([]byte{0x00, 0x18, 0x02, 0xc0, 0x03, 0x4d, 0x04, 0x0e, 0x05, 0x64, 0x06, 0xde, 0x07, 0x00, 0x08, 0x00, 0x09})
+	pkt.WithArch(0)
+	pkt.WithNIC([]byte{0x01, 0x02, 0x01})
+	pkt.WithVendorClassIdent("PXEClient:Arch:00000:UNDI:002001")
 
-	totalOutExpected := 0
-	outMatched := 0
+	reply = SendPacketAndRead(t, c, dhcpRaddr, pkt)
+	assertPXEReplyLike(t, reply, dhcp.DHCPAck, "netboot.xyz.kpxe")
 
-	// Open the capture file and process line-by-line for DHCP/PXE only
-	f, err := os.Open(capturePath)
-	if err != nil {
-		t.Fatalf("open capture: %v", err)
-	}
-	defer f.Close()
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 64<<10), 1<<20)
+	// 2nd DHCP Request exchange on PXE port
+	pkt = dhcp.New(1, 0x4e0e64de, net.HardwareAddr{0x18, 0xc0, 0x4d, 0x0e, 0x64, 0xde})
+	pkt.Secs = 4
+	pkt.Ciaddr = net.IPv4(192, 168, 0, 34)
+	pkt.WithMsgType(3)
+	pkt.WithParamRequestList(0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x0b, 0x0c, 0x0d, 0x0f, 0x10, 0x11, 0x12, 0x16, 0x17, 0x1c, 0x28, 0x29, 0x2a, 0x2b, 0x32, 0x33, 0x36, 0x3a, 0x3b, 0x3c, 0x42, 0x43, 0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87)
+	pkt.WithMaxMessageSize(1260)
+	pkt.WithClientMachineID([]byte{0x00, 0x18, 0x02, 0xc0, 0x03, 0x4d, 0x04, 0x0e, 0x05, 0x64, 0x06, 0xde, 0x07, 0x00, 0x08, 0x00, 0x09})
+	pkt.WithArch(0)
+	pkt.WithNIC([]byte{0x01, 0x02, 0x01})
+	pkt.WithVendorClassIdent("PXEClient:Arch:00000:UNDI:002001")
 
-	lineNum := 0
-	for scanner.Scan() {
-		lineNum++
-		line := scanner.Bytes()
-		if len(bytes.TrimSpace(line)) == 0 {
-			continue
-		}
-		var pkt capture.UDPPacket
-		if err := json.Unmarshal(line, &pkt); err != nil {
-			t.Fatalf("decode json line %d: %v", lineNum, err)
-		}
-		// Skip TFTP entries; we'll do TFTP manually below.
-		comp := strings.ToUpper(pkt.Component)
-		if comp == "TFTP" {
-			continue
-		}
-
-		payload, err := base64.StdEncoding.DecodeString(pkt.PayloadB64)
-		if err != nil {
-			t.Fatalf("decode payload (line %d): %v", lineNum, err)
-		}
-
-		// Map to correct flow/addr
-		var flow flowKey
-		var raddr *net.UDPAddr
-		switch comp {
-		case "DHCP":
-			port := dhcpPort
-			if strings.Contains(pkt.Note, "port=4011") || pkt.LocalPort == 4011 {
-				port = pxePort
-				flow = flowPXE
-			} else {
-				flow = flowDHCP
-			}
-			raddr = &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: port}
-		default:
-			t.Fatalf("unsupported component in capture: %s", comp)
-		}
-
-		dir := strings.ToLower(string(pkt.Direction))
-		tag := fmt.Sprintf("line=%d comp=%s dir=%s note=%s", lineNum, pkt.Component, dir, pkt.Note)
-
-		switch dir {
-		case "in":
-			c := getConn(flow)
-			if err := c.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
-				t.Fatalf("set write deadline: %v", err)
-			}
-			if _, err := c.WriteToUDP(payload, raddr); err != nil {
-				t.Fatalf("send (%s flow=%s) error: %v", tag, flow, err)
-			}
-			lp := c.LocalAddr().String()
-			rp := raddr.String()
-			pref := payload
-			if len(pref) > 16 {
-				pref = pref[:16]
-			}
-			ucomp := comp
-			lastFlow[ucomp] = flow
-			cc := ctxByComp[ucomp]
-			if cc == nil {
-				cc = &compCtx{}
-				ctxByComp[ucomp] = cc
-			}
-			cc.lastInLine = lineNum
-			cc.lastInSize = len(payload)
-			cc.lastInNote = pkt.Note
-			cc.lastLocal = lp
-			cc.lastRemote = rp
-			cc.lastInPrefix = fmt.Sprintf("%x", pref)
-		case "out":
-			totalOutExpected++
-			flowToUse := lastFlow[comp]
-			if flowToUse == "" {
-				flowToUse = flow
-			}
-			c := getConn(flowToUse)
-			deadline := time.Now().Add(250 * time.Millisecond)
-			matched := false
-			var lastErr error
-			for !matched && time.Now().Before(deadline) {
-				if err := c.SetReadDeadline(time.Now().Add(50 * time.Millisecond)); err != nil {
-					t.Fatalf("set read deadline: %v", err)
-				}
-				buf := make([]byte, 4096)
-				n, _, err := c.ReadFromUDP(buf)
-				if err != nil {
-					lastErr = err
-					continue
-				}
-				got := buf[:n]
-				if bytes.Equal(got, payload) {
-					matched = true
-					outMatched++
-					break
-				}
-			}
-			if !matched {
-				if cc := ctxByComp[comp]; cc != nil {
-					t.Fatalf("recv timeout %s flow=%s on=%s err=%v | last_in: line=%d note=%s from=%s->%s bytes=%d prefix=%s",
-						tag, flowToUse, c.LocalAddr().String(), lastErr, cc.lastInLine, cc.lastInNote, cc.lastLocal, cc.lastRemote, cc.lastInSize, cc.lastInPrefix)
-				}
-				t.Fatalf("recv (%s flow=%s on=%s): %v", tag, flowToUse, c.LocalAddr().String(), lastErr)
-			}
-		default:
-			t.Fatalf("line %d: unknown direction: %q", lineNum, dir)
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		t.Fatalf("scan capture: %v", err)
-	}
-
-	if outMatched != totalOutExpected {
-		t.Fatalf("not all expected DHCP/PXE packets were received: matched=%d total_expected=%d", outMatched, totalOutExpected)
-	}
+	reply = SendPacketAndRead(t, c, pxeRaddr, pkt)
+	assertPXEReplyLike(t, reply, dhcp.DHCPAck, "netboot.xyz.kpxe")
 
 	// Manual TFTP transfer
 	client, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
@@ -400,4 +275,118 @@ func TestReplayAndTFTP(t *testing.T) {
 	if !bytes.Equal(got, want) {
 		t.Fatalf("tftp payload mismatch: got=%d want=%d", len(got), len(want))
 	}
+
+	pkt = dhcp.New(1, 0xd9cc631d, net.HardwareAddr{0x18, 0xc0, 0x4d, 0x0e, 0x64, 0xde})
+	pkt.Secs = 8
+	pkt.Flags = 0x8000
+	pkt.WithMsgType(1)
+	pkt.WithMaxMessageSize(1472)
+	pkt.WithArch(0)
+	pkt.WithNIC([]byte{0x01, 0x02, 0x01})
+	pkt.WithVendorClassIdent("PXEClient:Arch:00000:UNDI:002001")
+	pkt.WithUserClass("iPXE")
+	pkt.WithParamRequestList(0x01, 0x03, 0x06, 0x07, 0x0c, 0x0f, 0x11, 0x1a, 0x2a, 0x2b, 0x3c, 0x42, 0x43, 0x77, 0x79, 0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0xaf, 0xcb)
+	pkt.AddOption(175, []byte{0xb1, 0x05, 0x01, 0x10, 0xec, 0x81, 0x68, 0xeb, 0x03, 0x01, 0x15, 0x01, 0x17, 0x01, 0x01, 0x27, 0x01, 0x01, 0x22, 0x01, 0x01, 0x13, 0x01, 0x01, 0x14, 0x01, 0x01, 0x11, 0x01, 0x01, 0x19, 0x01, 0x01, 0x29, 0x01, 0x01, 0x10, 0x01, 0x02, 0x21, 0x01, 0x01, 0x15, 0x01, 0x01, 0x18, 0x01, 0x01, 0x23, 0x01, 0x01, 0x1b, 0x01, 0x01, 0x26, 0x01, 0x01, 0x12, 0x01, 0x01})
+	pkt.WithClientID(1, net.HardwareAddr{0x18, 0xc0, 0x4d, 0x0e, 0x64, 0xde})
+	pkt.WithClientMachineID([]byte{0x00, 0x18, 0x02, 0xc0, 0x03, 0x4d, 0x04, 0x0e, 0x05, 0x64, 0x06, 0xde, 0x07, 0x00, 0x08, 0x00, 0x09})
+
+	reply = SendPacketAndRead(t, c, dhcpRaddr, pkt)
+	assertPXEReplyLike(t, reply, dhcp.DHCPOffer, "https://boot.netboot.xyz/menu.ipxe")
+}
+
+func SendPacketAndRead(t testing.TB, c *net.UDPConn, raddr *net.UDPAddr, pkt *dhcp.Packet) *dhcp.Packet {
+	t.Helper()
+
+	// Serialize
+	payload, err := pkt.Serialize()
+	if err != nil {
+		t.Fatalf("serialize payload: %v", err)
+	}
+
+	// Send
+	if err := c.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatalf("set write deadline: %v", err)
+	}
+	if _, err := c.WriteToUDP(payload, raddr); err != nil {
+		t.Fatalf("send error: %v", err)
+	}
+
+	// Read
+	if err := c.SetReadDeadline(time.Now().Add(150 * time.Millisecond)); err != nil {
+		t.Fatalf("set read deadline: %v", err)
+	}
+	buf := make([]byte, 8192)
+	n, _, err := c.ReadFromUDP(buf)
+	if err != nil {
+		t.Fatalf("read reply: %v", err)
+	}
+
+	// Parse
+	reply, err := dhcp.Parse(buf[:n])
+	if err != nil {
+		t.Fatalf("parse reply: %v", err)
+	}
+	return reply
+}
+
+func assertPXEReplyLike(t *testing.T, p *dhcp.Packet, wantMsgType byte, wantBootfile string) {
+	t.Helper()
+
+	if p.Op != 2 {
+		t.Fatalf("Op=%d, want 2 (reply)", p.Op)
+	}
+
+	wantSrv := net.IPv4(192, 168, 0, 31)
+	if !p.Siaddr.Equal(wantSrv) {
+		t.Fatalf("Siaddr=%v, want %v", p.Siaddr, wantSrv)
+	}
+
+	if got := optByte(t, p, dhcp.OptMsgType); got != wantMsgType {
+		t.Fatalf("MsgType=%d, want %d", got, wantMsgType)
+	}
+	if got := optIP(t, p, dhcp.OptServerID); !got.Equal(wantSrv) {
+		t.Fatalf("ServerID=%v, want %v", got, wantSrv)
+	}
+	if got := optString(t, p, dhcp.OptVendorClassIdent); got != "PXEClient" {
+		t.Fatalf("VendorClass=%q, want %q", got, "PXEClient")
+	}
+	if got := optString(t, p, dhcp.OptTFTPServer); got != "192.168.0.31" {
+		t.Fatalf("TFTP (66)=%q, want %q", got, "192.168.0.31")
+	}
+	if got := optString(t, p, dhcp.OptBootfile); got != wantBootfile {
+		t.Fatalf("Bootfile (67)=%q, want %q", got, wantBootfile)
+	}
+}
+
+func mustOpt(t *testing.T, p *dhcp.Packet, code byte) *dhcp.Option {
+	t.Helper()
+	o := p.GetOption(code)
+	if o == nil {
+		t.Fatalf("missing option %d", code)
+	}
+	return o
+}
+
+func optByte(t *testing.T, p *dhcp.Packet, code byte) byte {
+	t.Helper()
+	o := mustOpt(t, p, code)
+	if len(o.Data) < 1 {
+		t.Fatalf("short option %d", code)
+	}
+	return o.Data[0]
+}
+
+func optIP(t *testing.T, p *dhcp.Packet, code byte) net.IP {
+	t.Helper()
+	o := mustOpt(t, p, code)
+	if len(o.Data) < 4 {
+		t.Fatalf("short IP option %d", code)
+	}
+	return net.IP(o.Data[:4])
+}
+
+func optString(t *testing.T, p *dhcp.Packet, code byte) string {
+	t.Helper()
+	o := mustOpt(t, p, code)
+	return string(o.Data)
 }
