@@ -68,10 +68,10 @@ func TestReplayAndTFTP(t *testing.T) {
 	// Start server with ephemeral ports
 	cfg := NewConfig(
 		WithDHCPPort(0),
+		WithDHCPBroadcastPort(bp),
 		WithPXEPort(0),
 		WithTFTPPort(0),
-		WithAdvertisedIP("192.168.0.31"),
-		WithDHCPBroadcastPort(bp),
+		WithAdvertisedIP(net.ParseIP("192.168.0.31")),
 		WithBootfileProvider(provider),
 		WithLogger(slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{}))),
 	)

@@ -17,14 +17,14 @@ func main() {
 	// Configure slog default with pretty colorized formatter and source trimming.
 	slog.SetDefault(slog.New(logging.NewPrettyHandler(os.Stderr, &slog.HandlerOptions{AddSource: true})))
 	// Discover LAN IP to advertise to PXE clients.
-	lanIP := ""
+	lanIP := net.IPv4zero
 	if ip, err := outboundIP(); err == nil {
-		lanIP = ip.String()
+		lanIP = ip
 	} else {
 		slog.Error("Error detecting outbound IP", "err", err)
 		os.Exit(1)
 	}
-	slog.Info("Detected outbound IP", "ip", lanIP)
+	slog.Info("Detected outbound IP", "ip", lanIP.String())
 
 	// Default bootfile provider: HTTP upstream
 	provider := tftp.NewHTTPProvider("https://boot.netboot.xyz/ipxe/")

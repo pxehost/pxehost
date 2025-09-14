@@ -50,7 +50,7 @@ func (a *App) Start() error {
 	if err := a.CheckPrivileges(); err != nil {
 		return err
 	}
-	if a.cfg.AdvertisedIP == "" {
+	if a.cfg.AdvertisedIP == nil {
 		return fmt.Errorf("missing AdvertisedIP in config")
 	}
 	if a.cfg.Logger == nil {

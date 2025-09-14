@@ -2,6 +2,7 @@ package app
 
 import (
 	"log/slog"
+	"net"
 
 	"github.com/srcreigh/pxehost/internal/capture"
 	"github.com/srcreigh/pxehost/internal/tftp"
@@ -14,7 +15,7 @@ type Config struct {
 	ProxyDHCPPort    int                   // PXE service listen port (typically 4011)
 	TFTPPort         int                   // TFTP listen port (typically 69)
 	BootfileProvider tftp.BootfileProvider // supplies bootfiles for TFTP server
-	AdvertisedIP     string                // IPv4 advertised to clients (TFTP server IP)
+	AdvertisedIP     net.IP                // IPv4 advertised to clients (TFTP server IP)
 	PacketLog        capture.PacketLogger  // optional: packet logger implementation
 	Geteuid          func() int            // used for permission checks
 	Logger           *slog.Logger          // required: application logger
@@ -52,7 +53,7 @@ func WithBootfileProvider(p tftp.BootfileProvider) Option {
 }
 
 // WithAdvertisedIP sets the IPv4 address advertised to clients (TFTP server IP).
-func WithAdvertisedIP(ip string) Option { return func(c *Config) { c.AdvertisedIP = ip } }
+func WithAdvertisedIP(ip net.IP) Option { return func(c *Config) { c.AdvertisedIP = ip } }
 
 // WithGeteuid sets the function used to get the effective user ID.
 func WithGeteuid(geteuid func() int) Option { return func(c *Config) { c.Geteuid = geteuid } }

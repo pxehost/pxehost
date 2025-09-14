@@ -18,7 +18,7 @@ import (
 // It binds to UDP ports and advertises TFTP server and bootfile
 // to PXE clients without assigning IPs.
 type ProxyDHCP struct {
-	TFTPServerIP string
+	TFTPServerIP net.IP
 
 	conn     *net.UDPConn
 	conn4011 *net.UDPConn
@@ -244,11 +244,9 @@ func (p *ProxyDHCP) handle(conn *net.UDPConn, req []byte, src *net.UDPAddr, port
 		WithVendorClassIdent("PXEClient").
 		WithBootFile(bootfile)
 
-	if ip := net.ParseIP(p.TFTPServerIP); ip != nil {
-		respPkt.Siaddr = ip
-		respPkt.WithServerID(ip)
-		respPkt.WithTFTPServer(p.TFTPServerIP)
-	}
+	respPkt.Siaddr = p.TFTPServerIP
+	respPkt.WithServerID(p.TFTPServerIP)
+	respPkt.WithTFTPServer(p.TFTPServerIP.String())
 
 	// Log outgoing options in a readable way from respPkt.Options
 	if len(respPkt.Options) > 0 {
