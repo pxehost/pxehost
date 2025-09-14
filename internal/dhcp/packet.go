@@ -23,12 +23,16 @@ const (
 	OptMsgType          = 53
 	OptClientID         = 61
 	OptParamReqList     = 55
-	OptHostName         = 12
 	OptVendorClassIdent = 60
 	OptServerID         = 54
 	OptRequestedIP      = 50
 	OptTFTPServer       = 66
 	OptBootfile         = 67
+	OptMaxMessageSize   = 57
+	OptUserClass        = 77
+	OptClientArch       = 93
+	OptNIC              = 94
+	OptClientMachineID  = 97
 
 	// Message types
 	DHCPDiscover = 1
@@ -42,6 +46,8 @@ const (
 
 	// Magic cookie
 	magicCookie = 0x63825363
+	// BOOTP flags
+	BOOTPFlagBroadcast = 0x8000
 )
 
 // Option is a single DHCP option TLV.
@@ -89,11 +95,6 @@ func NewPacket(op byte, xid uint32, mac net.HardwareAddr) *Packet {
 
 func (p *Packet) WithMsgType(t byte) *Packet {
 	p.Options = append(p.Options, Option{Code: OptMsgType, Data: []byte{t}})
-	return p
-}
-
-func (p *Packet) WithHostname(name string) *Packet {
-	p.Options = append(p.Options, Option{Code: OptHostName, Data: []byte(name)})
 	return p
 }
 
@@ -352,8 +353,6 @@ func (p *Packet) ToCodeString() string {
 			if len(o.Data) == 1 {
 				fmt.Fprintf(&sb, "pkt.WithMsgType(%d)\n", o.Data[0])
 			}
-		case OptHostName:
-			fmt.Fprintf(&sb, "pkt.WithHostname(%q)\n", string(o.Data))
 		case OptVendorClassIdent:
 			fmt.Fprintf(&sb, "pkt.WithVendorClassIdent(%q)\n", string(o.Data))
 		case OptClientID:
@@ -372,25 +371,25 @@ func (p *Packet) ToCodeString() string {
 			if len(o.Data) == 4 {
 				fmt.Fprintf(&sb, "pkt.WithServerID(%s)\n", ipLit(net.IP(o.Data)))
 			}
-		case 57: // Max message size
+		case OptMaxMessageSize:
 			if len(o.Data) == 2 {
 				fmt.Fprintf(&sb, "pkt.WithMaxMessageSize(%d)\n", binary.BigEndian.Uint16(o.Data))
 			}
-		case 93: // Arch
+		case OptClientArch:
 			if len(o.Data) == 2 {
 				fmt.Fprintf(&sb, "pkt.WithArch(%d)\n", binary.BigEndian.Uint16(o.Data))
 			}
-		case 94: // NIC
+		case OptNIC:
 			fmt.Fprintf(&sb, "pkt.WithNIC([]byte{%s})\n", bytesLit(o.Data))
-		case 97: // Client Machine ID
+		case OptClientMachineID:
 			fmt.Fprintf(&sb, "pkt.WithClientMachineID([]byte{%s})\n", bytesLit(o.Data))
 		case OptPad, OptEnd:
 			// ignore
-		case 66: // TFTP server name
+		case OptTFTPServer:
 			fmt.Fprintf(&sb, "pkt.WithTFTPServer(%q)\n", string(o.Data))
-		case 67: // Boot file name
+		case OptBootfile:
 			fmt.Fprintf(&sb, "pkt.WithBootFile(%q)\n", string(o.Data))
-		case 77: // User Class
+		case OptUserClass:
 			fmt.Fprintf(&sb, "pkt.WithUserClass(%q)\n", string(o.Data))
 		default:
 			fmt.Fprintf(&sb, "pkt.AddOption(%d, []byte{%s})\n", o.Code, bytesLit(o.Data))

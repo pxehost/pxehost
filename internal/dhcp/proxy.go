@@ -14,36 +14,6 @@ import (
 	"github.com/srcreigh/pxehost/internal/capture"
 )
 
-// DHCP protocol constants and helpers
-const (
-	// BOOTP flags
-	bootpFlagBroadcastMask = 0x8000
-
-	// DHCP option codes (subset used here)
-	optMsgType          = 53
-	optServerID         = 54
-	optVendorClassID    = 60
-	optTFTPServerName   = 66
-	optBootfileName     = 67
-	optUserClass        = 77
-	optClientArch       = 93
-	optClientUUID       = 97
-	optParamRequestList = 55
-	optMaxDHCPMsgSize   = 57
-)
-
-// DHCP message type values
-const (
-	dhcpMsgDiscover = 1
-	dhcpMsgOffer    = 2
-	dhcpMsgRequest  = 3
-	dhcpMsgDecline  = 4
-	dhcpMsgAck      = 5
-	dhcpMsgNak      = 6
-)
-
-//
-
 // ProxyDHCP is a minimal ProxyDHCP responder (PXE Boot Server Discovery).
 // It binds to UDP ports and advertises TFTP server and bootfile
 // to PXE clients without assigning IPs.
@@ -205,7 +175,6 @@ func isNetClosed(err error) bool {
 }
 
 func (p *ProxyDHCP) handle(conn *net.UDPConn, req []byte, src *net.UDPAddr, port int) {
-	// Parse via DHCP packet module
 	pkt, err := Parse(req)
 	if err != nil {
 		p.Logger.Debug("ProxyDHCP ignoring non-DHCP/invalid packet", "port", port, "from", src.String(), "len", len(req), "err", err)
@@ -246,7 +215,7 @@ func (p *ProxyDHCP) handle(conn *net.UDPConn, req []byte, src *net.UDPAddr, port
 
 	// Determine client architecture (option 93). Default to UEFI x86_64 if unknown.
 	arch := uint16(0x0000)
-	if v, ok := inOpts[93]; ok && len(v) >= 2 { // 93 = client arch
+	if v, ok := inOpts[OptClientArch]; ok && len(v) >= 2 {
 		arch = uint16(v[0])<<8 | uint16(v[1])
 	}
 
@@ -255,7 +224,7 @@ func (p *ProxyDHCP) handle(conn *net.UDPConn, req []byte, src *net.UDPAddr, port
 	bootfile := ""
 	// If client identifies as iPXE via Option 77 (User Class),
 	// provide an iPXE script URL over HTTPS instead of TFTP bootfile.
-	if uc, ok := inOpts[77]; ok && bytes.Contains(uc, []byte("iPXE")) { // 77 = user class
+	if uc, ok := inOpts[OptUserClass]; ok && bytes.Contains(uc, []byte("iPXE")) {
 		bootfile = "https://boot.netboot.xyz/menu.ipxe"
 	} else {
 		// PXE BIOS step -- need to specify TFTP filename.
@@ -292,7 +261,7 @@ func (p *ProxyDHCP) handle(conn *net.UDPConn, req []byte, src *net.UDPAddr, port
 
 	// Decide reply destination: broadcast if client requested broadcast
 	dst := &net.UDPAddr{IP: net.IPv4bcast, Port: p.DHCPBroadcastPort}
-	broadcast := (pkt.Flags & bootpFlagBroadcastMask) != 0
+	broadcast := (pkt.Flags & BOOTPFlagBroadcast) != 0
 	if ip4 := src.IP.To4(); ip4 != nil && !ip4.Equal(net.IPv4zero) && !broadcast {
 		dst = &net.UDPAddr{IP: ip4, Port: src.Port}
 	}
@@ -337,11 +306,6 @@ func (p *ProxyDHCP) handle(conn *net.UDPConn, req []byte, src *net.UDPAddr, port
 		}
 	}
 }
-
-// logger returns the configured logger or the default slog logger.
-// logger helper removed; ProxyDHCP requires non-nil Logger.
-
-//
 
 // formatDHCPOptions returns a multi-line, human-friendly dump of DHCP options
 // including code, canonical name (if known), decoded value, and raw hex bytes.
@@ -397,78 +361,28 @@ func truncateString(s string, max int) string {
 
 func dhcpOptionName(code byte) string {
 	switch code {
-	case 1:
-		return "Subnet Mask"
-	case 2:
-		return "Time Offset"
-	case 3:
-		return "Router"
-	case 4:
-		return "Time Server"
-	case 5:
-		return "Name Server"
-	case 6:
-		return "DNS Servers"
-	case 12:
-		return "Host Name"
-	case 13:
-		return "Boot File Size"
-	case 15:
-		return "Domain Name"
-	case 28:
-		return "Broadcast Address"
-	case 42:
-		return "NTP Servers"
-	case 43:
-		return "Vendor Specific"
-	case 44:
-		return "NetBIOS Name Servers"
-	case 45:
-		return "NetBIOS Datagram Servers"
-	case 46:
-		return "NetBIOS Node Type"
-	case 47:
-		return "NetBIOS Scope ID"
-	case 50:
+	case OptRequestedIP:
 		return "Requested IP Address"
-	case 51:
-		return "IP Address Lease Time"
-	case 52:
-		return "Option Overload"
-	case 53:
+	case OptMsgType:
 		return "DHCP Message Type"
-	case 54:
+	case OptServerID:
 		return "Server Identifier"
-	case 55:
+	case OptParamReqList:
 		return "Parameter Request List"
-	case 56:
-		return "Message"
-	case 57:
+	case OptMaxMessageSize:
 		return "Maximum DHCP Message Size"
-	case 58:
-		return "Renewal (T1) Time"
-	case 59:
-		return "Rebinding (T2) Time"
-	case 60:
+	case OptVendorClassIdent:
 		return "Vendor Class Identifier"
-	case 61:
+	case OptClientID:
 		return "Client Identifier"
-	case 66:
+	case OptTFTPServer:
 		return "TFTP Server Name"
-	case 67:
+	case OptBootfile:
 		return "Bootfile Name"
-	case 93:
+	case OptClientArch:
 		return "Client System Architecture"
-	case 97:
+	case OptClientMachineID:
 		return "Client Network Interface Identifier"
-	case 119:
-		return "Domain Search"
-	case 121:
-		return "Classless Static Route"
-	case 249:
-		return "MS Classless Static Route"
-	case 252:
-		return "WPAD/Proxy Auto-Config"
 	default:
 		return fmt.Sprintf("Option %d", code)
 	}
@@ -476,34 +390,17 @@ func dhcpOptionName(code byte) string {
 
 func decodeDHCPOption(code byte, v []byte) string {
 	switch code {
-	case 1: // subnet mask
-		if len(v) == 4 {
-			return net.IP(v).String()
-		}
-	case 3, 6: // router or dns servers
-		if len(v)%4 == 0 {
-			ips := make([]string, 0, len(v)/4)
-			for i := 0; i < len(v); i += 4 {
-				ips = append(ips, net.IP(v[i:i+4]).String())
-			}
-			return joinComma(ips)
-		}
-	case 12, 15, optTFTPServerName, optBootfileName, optVendorClassID: // strings
+	case OptTFTPServer, OptBootfile, OptVendorClassIdent: // strings
 		return safeASCII(v)
-	case 50, optServerID: // IP addresses
+	case OptRequestedIP, OptServerID: // IP addresses
 		if len(v) == 4 {
 			return net.IP(v).String()
 		}
-	case 51: // lease time
-		if len(v) == 4 {
-			sec := binary.BigEndian.Uint32(v)
-			return fmt.Sprintf("%ds", sec)
-		}
-	case optMsgType: // message type
+	case OptMsgType: // message type
 		if len(v) == 1 {
 			return fmt.Sprintf("%d (%s)", v[0], dhcpMessageTypeName(v[0]))
 		}
-	case optParamRequestList: // parameter request list — show raw requested codes
+	case OptParamReqList: // parameter request list — show raw requested codes
 		if len(v) > 0 {
 			items := make([]string, 0, len(v))
 			for _, c := range v {
@@ -511,18 +408,18 @@ func decodeDHCPOption(code byte, v []byte) string {
 			}
 			return "[" + joinComma(items) + "]"
 		}
-	case optMaxDHCPMsgSize: // max message size
+	case OptMaxMessageSize: // max message size
 		if len(v) == 2 {
 			return fmt.Sprintf("%d", binary.BigEndian.Uint16(v))
 		}
-	case 61: // client identifier
+	case OptClientID: // client identifier
 		return fmt.Sprintf("%s (ascii=%q)", hexBytes(v), printableASCII(v))
-	case optClientArch: // client arch
+	case OptClientArch: // client arch
 		if len(v) >= 2 {
 			arch := uint16(v[0])<<8 | uint16(v[1])
 			return fmt.Sprintf("0x%04x", arch)
 		}
-	case optClientUUID: // UUID
+	case OptClientMachineID: // Client Machine Identifier (UUID type 0)
 		if len(v) == 17 && v[0] == 0 { // type 0, UUID
 			return fmt.Sprintf("uuid=%s", hexBytes(v[1:]))
 		}
@@ -533,17 +430,17 @@ func decodeDHCPOption(code byte, v []byte) string {
 
 func dhcpMessageTypeName(t byte) string {
 	switch t {
-	case dhcpMsgDiscover:
+	case DHCPDiscover:
 		return "DISCOVER"
-	case dhcpMsgOffer:
+	case DHCPOffer:
 		return "OFFER"
-	case dhcpMsgRequest:
+	case DHCPRequest:
 		return "REQUEST"
-	case dhcpMsgDecline:
+	case DHCPDecline:
 		return "DECLINE"
-	case dhcpMsgAck:
+	case DHCPAck:
 		return "ACK"
-	case dhcpMsgNak:
+	case DHCPNak:
 		return "NAK"
 	case 7:
 		return "RELEASE"
