@@ -2,7 +2,6 @@ package app
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/srcreigh/pxehost/internal/dhcp"
 	"github.com/srcreigh/pxehost/internal/tftp"
@@ -13,9 +12,6 @@ import (
 type App struct {
 	cfg *Config
 
-	// Dependencies that can be overridden in tests.
-	EUID func() int // defaults to os.Geteuid
-
 	// Runtime state
 	tftps *tftp.Server
 	proxy *dhcp.ProxyDHCP
@@ -24,8 +20,7 @@ type App struct {
 // New constructs an App with sensible defaults.
 func New(cfg *Config) *App {
 	a := &App{
-		cfg:  cfg,
-		EUID: os.Geteuid,
+		cfg: cfg,
 	}
 	return a
 }

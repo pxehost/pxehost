@@ -76,7 +76,6 @@ func TestReplayAndTFTP(t *testing.T) {
 		WithLogger(slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{}))),
 	)
 	a := New(cfg)
-	a.EUID = func() int { return 0 }
 	if err := a.Start(); err != nil {
 		t.Fatalf("start app: %v", err)
 	}
