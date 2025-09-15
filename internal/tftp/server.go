@@ -26,6 +26,8 @@ import (
 // This is intentionally small and purpose-built for serving the initial iPXE
 // binaries; it is not a full TFTP implementation.
 
+type ListenFunc func(network string, laddr *net.UDPAddr) (net.PacketConn, error)
+
 type Server struct {
 	// Provider supplies bootfiles by name.
 	Provider BootfileProvider
@@ -33,7 +35,9 @@ type Server struct {
 	// Logger must be provided.
 	Logger *slog.Logger
 
-	conn   *net.UDPConn
+	ListenUDP ListenFunc
+
+	conn   net.PacketConn
 	nextID uint64
 
 	Port int
@@ -45,7 +49,7 @@ type Server struct {
 // logPacket captures a UDP packet via PacketLog using addressing derived from
 // the provided local UDP connection and the given remote address. No-ops if
 // PacketLog is nil or inputs are incomplete. Payload is defensively copied.
-func (s *Server) logPacket(conn *net.UDPConn, dir capture.Direction, remote *net.UDPAddr, note string, payload []byte) {
+func (s *Server) logPacket(conn net.PacketConn, dir capture.Direction, remote net.Addr, note string, payload []byte) {
 	if s == nil || s.PacketLog == nil || conn == nil || remote == nil {
 		return
 	}
@@ -55,13 +59,19 @@ func (s *Server) logPacket(conn *net.UDPConn, dir capture.Direction, remote *net
 		lip = la.IP.String()
 		lport = la.Port
 	}
+	rip := ""
+	rport := 0
+	if ra, ok := remote.(*net.UDPAddr); ok && ra != nil {
+		rip = ra.IP.String()
+		rport = ra.Port
+	}
 	// Copy payload to decouple from caller's buffer reuse
 	cp := append([]byte(nil), payload...)
 	s.PacketLog.Log(capture.MakePacket(
 		dir,
 		"TFTP",
 		lip, lport,
-		remote.IP.String(), remote.Port,
+		rip, rport,
 		note,
 		cp,
 	))
@@ -74,11 +84,14 @@ func (s *Server) StartAsync() error {
 	if s.Logger == nil {
 		return fmt.Errorf("tftp: Logger must be set")
 	}
+	if s.ListenUDP == nil {
+		return fmt.Errorf("tftp: ListenUDP must be set")
+	}
 	addr, err := net.ResolveUDPAddr("udp4", fmt.Sprintf(":%d", s.Port))
 	if err != nil {
 		return fmt.Errorf("tftp: resolve :%d: %w", s.Port, err)
 	}
-	c, err := net.ListenUDP("udp4", addr)
+	c, err := s.ListenUDP("udp4", addr)
 	if err != nil {
 		return fmt.Errorf("tftp: listen :%d: %w", s.Port, err)
 	}
@@ -112,7 +125,7 @@ func (s *Server) BoundPort() int {
 func (s *Server) serve() {
 	buf := make([]byte, 2048)
 	for {
-		n, raddr, err := s.conn.ReadFromUDP(buf)
+		n, raddr, err := s.conn.ReadFrom(buf)
 		if err != nil {
 			// Suppress expected errors when the socket is closed on shutdown.
 			if isNetClosed(err) {
@@ -121,12 +134,16 @@ func (s *Server) serve() {
 			s.Logger.Error(fmt.Sprintf("TFTP: read error: %v", err))
 			return
 		}
+		// Ensure UDP address
+		udpRaddr, _ := raddr.(*net.UDPAddr)
 		// Packet capture: inbound request to port 69
 		s.logPacket(s.conn, capture.DirIn, raddr, "rrq", buf[:n])
 		// Handle each request in its own goroutine
 		pkt := make([]byte, n)
 		copy(pkt, buf[:n])
-		go s.handleRRQ(pkt, raddr)
+		if udpRaddr != nil {
+			go s.handleRRQ(pkt, udpRaddr)
+		}
 	}
 }
 
@@ -219,7 +236,7 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
 	}()
 
 	// Create session socket bound to ephemeral port
-	sessConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
+	sessConn, err := s.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
 	if err != nil {
 		s.Logger.Error(fmt.Sprintf("TFTP: sid=%d failed to open session socket: %v", sid, err))
 		s.sendError(client, 0, "internal error")
@@ -248,7 +265,7 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
 		if err := sessConn.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
 			s.Logger.Warn(fmt.Sprintf("TFTP: sid=%d set write deadline (OACK) error: %v", sid, err))
 		}
-		if _, err := sessConn.WriteToUDP(oack, client); err == nil {
+		if _, err := sessConn.WriteTo(oack, client); err == nil {
 			s.logPacket(sessConn, capture.DirOut, client, "oack", oack)
 		}
 		// Wait for ACK block 0
@@ -259,8 +276,9 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
 		if err := sessConn.SetReadDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
 			s.Logger.Warn(fmt.Sprintf("TFTP: sid=%d set read deadline (OACK ACK wait) error: %v", sid, err))
 		}
-		n, raddr, err := sessConn.ReadFromUDP(buf)
-		if err != nil || raddr == nil || !raddr.IP.Equal(client.IP) || raddr.Port != client.Port {
+		n, raddr, err := sessConn.ReadFrom(buf)
+		rudp, _ := raddr.(*net.UDPAddr)
+		if err != nil || rudp == nil || !rudp.IP.Equal(client.IP) || rudp.Port != client.Port {
 			s.Logger.Debug(fmt.Sprintf("TFTP: sid=%d no ACK(0) after OACK from %s err=%v", sid, client.String(), err))
 			// proceed anyway (some clients may accept data immediately)
 		} else if n >= 4 && (int(buf[0])<<8|int(buf[1])) == opACK && int(buf[2]) == 0 && int(buf[3]) == 0 {
@@ -306,7 +324,7 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
 			if err := sessConn.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
 				s.Logger.Warn(fmt.Sprintf("TFTP: sid=%d set write deadline (DATA) error: %v", sid, err))
 			}
-			if _, err := sessConn.WriteToUDP(pkt, client); err != nil {
+			if _, err := sessConn.WriteTo(pkt, client); err != nil {
 				s.Logger.Warn(fmt.Sprintf("TFTP: sid=%d write error to %s: %v", sid, client.String(), err))
 				// retry on transient errors; next attempt will resend
 				continue
@@ -317,7 +335,7 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
 			if err := sessConn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
 				s.Logger.Warn(fmt.Sprintf("TFTP: sid=%d set read deadline (ACK wait) error: %v", sid, err))
 			}
-			n, raddr, err := sessConn.ReadFromUDP(buf)
+			n, raddr, err := sessConn.ReadFrom(buf)
 			if err != nil {
 				if attempt+1 < maxRetry {
 					s.Logger.Warn(fmt.Sprintf("TFTP: sid=%d timeout waiting ACK for block=%d attempt=%d/%d", sid, blockNum, attempt+1, maxRetry))
@@ -325,7 +343,8 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
 				// retry
 				continue
 			}
-			if raddr == nil || !raddr.IP.Equal(client.IP) || raddr.Port != client.Port {
+			rudp, _ := raddr.(*net.UDPAddr)
+			if rudp == nil || !rudp.IP.Equal(client.IP) || rudp.Port != client.Port {
 				// ignore stray
 				attempt--
 				continue
@@ -377,7 +396,7 @@ func (s *Server) sendError(dst *net.UDPAddr, code int, msg string) {
 	if err := s.conn.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
 		s.Logger.Warn(fmt.Sprintf("TFTP: set write deadline (ERROR pkt) error: %v", err))
 	}
-	if _, err := s.conn.WriteToUDP(b, dst); err == nil {
+	if _, err := s.conn.WriteTo(b, dst); err == nil {
 		s.logPacket(s.conn, capture.DirOut, dst, "error", b)
 	}
 	s.Logger.Info(fmt.Sprintf("TFTP: sent ERROR to %s code=%d msg=%q", dst.String(), code, msg))
