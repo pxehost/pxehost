@@ -76,13 +76,14 @@ func (h *PrettyHandler) Handle(_ context.Context, r slog.Record) error {
 	lvlColor := colorForLevel(r.Level)
 	buf.WriteString(lvlColor)
 	buf.WriteString(strings.ToUpper(r.Level.String()))
-	if len(r.Level.String()) < 5 {
-		buf.WriteString(" ")
-	}
 	buf.WriteString(colReset)
 	buf.WriteByte(' ')
 
 	// source (trim to last 25 chars)
+	targetSize := 25
+	if len(r.Level.String()) < 5 {
+		targetSize = 26
+	}
 	src := ""
 	if r.PC != 0 && h.opts.AddSource {
 		frs := runtime.CallersFrames([]uintptr{r.PC})
@@ -92,8 +93,8 @@ func (h *PrettyHandler) Handle(_ context.Context, r slog.Record) error {
 		}
 	}
 	if src != "" {
-		if len(src) > 25 {
-			src = src[len(src)-25:]
+		if len(src) > targetSize {
+			src = src[len(src)-targetSize:]
 		}
 		buf.WriteString(colGray)
 		buf.WriteString(src)

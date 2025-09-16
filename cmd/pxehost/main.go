@@ -51,6 +51,7 @@ func main() {
 	sigc := make(chan os.Signal, 1)
 	signal.Notify(sigc, syscall.SIGINT, syscall.SIGTERM)
 	<-sigc
+	fmt.Println()
 	slog.Info("shutting down...")
 	a.Stop()
 }
