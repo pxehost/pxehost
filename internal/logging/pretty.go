@@ -76,6 +76,9 @@ func (h *PrettyHandler) Handle(_ context.Context, r slog.Record) error {
 	lvlColor := colorForLevel(r.Level)
 	buf.WriteString(lvlColor)
 	buf.WriteString(strings.ToUpper(r.Level.String()))
+	if len(r.Level.String()) < 5 {
+		buf.WriteString(" ")
+	}
 	buf.WriteString(colReset)
 	buf.WriteByte(' ')
 

@@ -2,7 +2,6 @@ package app
 
 import (
 	"fmt"
-	"net"
 
 	"github.com/srcreigh/pxehost/internal/dhcp"
 	"github.com/srcreigh/pxehost/internal/tftp"
@@ -26,14 +25,6 @@ func New(cfg *Config) *App {
 	return a
 }
 
-func listenUdp(network string, laddr *net.UDPAddr) (net.PacketConn, error) {
-	conn, err := net.ListenUDP(network, laddr)
-	if err != nil {
-		return nil, fmt.Errorf("listen UDP: %w", err)
-	}
-	return conn, nil
-}
-
 // Start initializes and starts the TFTP proxy and ProxyDHCP services.
 func (a *App) Start() error {
 	if a == nil || a.cfg == nil {
@@ -49,7 +40,7 @@ func (a *App) Start() error {
 		return fmt.Errorf("missing BootfileProvider in config")
 	}
 	// Start TFTP proxy
-	a.tftps = &tftp.Server{Provider: a.cfg.BootfileProvider, Port: a.cfg.TFTPPort, PacketLog: a.cfg.PacketLog, Logger: a.cfg.Logger, ListenUDP: listenUdp}
+	a.tftps = &tftp.Server{Provider: a.cfg.BootfileProvider, Port: a.cfg.TFTPPort, PacketLog: a.cfg.PacketLog, Logger: a.cfg.Logger}
 	if err := a.tftps.StartAsync(); err != nil {
 		return fmt.Errorf("tftp server start: %w", err)
 	}

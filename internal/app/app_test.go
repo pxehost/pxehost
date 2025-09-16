@@ -303,6 +303,8 @@ func TestReplayAndTFTP(t *testing.T) {
 
 	reply = SendPacketAndRead(t, c, dhcpRaddr, pkt)
 	assertPXEReplyLike(t, reply, dhcp.DHCPOffer, "https://boot.netboot.xyz/menu.ipxe")
+
+	t.Fatalf("ping")
 }
 
 func SendPacketAndRead(t testing.TB, c *net.UDPConn, raddr *net.UDPAddr, pkt *dhcp.Packet) *dhcp.Packet {
