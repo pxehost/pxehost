@@ -189,12 +189,11 @@ func (s *Server) handleRRQ(req *ReadReq, client *net.UDPAddr) {
 		}
 		s.Logger.Info(fmt.Sprintf("TFTP: sid=%d oack request opts=%v respond=%v", sid, req.Options, pkt.Options))
 		acked := s.retrySendAndAwaitAck(
-			sessConn, client, &pkt,
+			sid, sessConn, client, &pkt, 3,
 		)
 
 		if !acked {
 			s.Logger.Info(fmt.Sprintf("TFTP: sid=%d did not receive ACK(0); closing session", sid))
-			return
 		}
 	}
 
@@ -228,7 +227,7 @@ func (s *Server) handleRRQ(req *ReadReq, client *net.UDPAddr) {
 		}
 
 		maxRetries := 5
-		acked := s.retrySendAndAwaitAck(sessConn, client, &pkt)
+		acked := s.retrySendAndAwaitAck(sid, sessConn, client, &pkt, 5)
 
 		if !acked {
 			// Give up on this transfer after max retries without ACK
@@ -255,9 +254,11 @@ func (s *Server) handleRRQ(req *ReadReq, client *net.UDPAddr) {
 }
 
 func (s *Server) retrySendAndAwaitAck(
+	sid uint64,
 	conn *net.UDPConn,
 	dst *net.UDPAddr,
 	pkt Packet,
+	maxAttempts int,
 ) bool {
 	buf := make([]byte, 1500)
 	var blockNum uint16
@@ -270,24 +271,23 @@ func (s *Server) retrySendAndAwaitAck(
 		blockNum = pkt.Block
 		label = fmt.Sprintf("data(%d)", pkt.Block)
 	default:
-		s.Logger.Error(fmt.Sprintf("can't send packet type %T", pkt))
+		s.Logger.Error(fmt.Sprintf("TFTP: sid=%d can't send packet type %T", sid, pkt))
 	}
 
 	raw, err := Serialize(pkt)
 	if err != nil {
-		s.Logger.Error(fmt.Sprintf("serialize packet: %v", err))
+		s.Logger.Error(fmt.Sprintf("TFTP: sid=%d serialize packet: %v", sid, err))
 		return false
 	}
 
-	maxAttempts := 5
-	jitter := time.Duration(rand.Int63n(int64(40*time.Millisecond)*2)) - 20*time.Millisecond
-	writeDeadline := 200 * time.Millisecond
-	readDeadline := 200*time.Millisecond + jitter
+	jitter := time.Duration(rand.Int63n(int64(400*time.Millisecond)*2)) - 200*time.Millisecond
+	writeDeadline := 1000 * time.Millisecond
+	readDeadline := 1000*time.Millisecond + jitter
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		// (re)send
 		_ = conn.SetWriteDeadline(time.Now().Add(writeDeadline))
 		if _, err := conn.WriteTo(raw, dst); err != nil {
-			s.Logger.Warn(fmt.Sprintf("send error to %s: %v", dst.String(), err))
+			s.Logger.Warn(fmt.Sprintf("TFTP: sid=%d send error to %s: %v", sid, dst.String(), err))
 			continue
 		}
 		s.logPacket(s.conn, capture.DirOut, *dst, label, raw)
@@ -298,7 +298,7 @@ func (s *Server) retrySendAndAwaitAck(
 		if err != nil {
 			// timeout → next attempt
 			if strings.Contains(err.Error(), "timeout") && attempt+1 < maxAttempts {
-				s.Logger.Warn(fmt.Sprintf("timeout waiting for %s attempt=%d/%d", label, attempt+1, maxAttempts))
+				s.Logger.Info(fmt.Sprintf("TFTP: sid=%d timeout waiting for %s attempt=%d/%d", sid, label, attempt+1, maxAttempts))
 			}
 			continue
 		}
