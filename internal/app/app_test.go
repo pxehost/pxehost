@@ -7,10 +7,13 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/srcreigh/pxehost/internal/dhcp"
+	"github.com/srcreigh/pxehost/internal/logging"
+	"github.com/srcreigh/pxehost/internal/tftp"
 )
 
 // mappedProvider implements tftp.BootfileProvider by mapping
@@ -66,6 +69,8 @@ func TestReplayAndTFTP(t *testing.T) {
 	}
 
 	// Start server with ephemeral ports
+	// Configure slog default with pretty colorized formatter and source trimming.
+	logger := slog.New(logging.NewPrettyHandler(os.Stderr, &slog.HandlerOptions{AddSource: true}))
 	cfg := NewConfig(
 		WithDHCPPort(0),
 		WithDHCPBroadcastPort(bp),
@@ -73,7 +78,7 @@ func TestReplayAndTFTP(t *testing.T) {
 		WithTFTPPort(0),
 		WithAdvertisedIP(net.ParseIP("192.168.0.31")),
 		WithBootfileProvider(provider),
-		WithLogger(slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{}))),
+		WithLogger(logger),
 	)
 	a := New(cfg)
 	if err := a.Start(); err != nil {
@@ -179,7 +184,7 @@ func TestReplayAndTFTP(t *testing.T) {
 
 	// First RRQ: tsize=0 (probe)
 	rrq1 := buildRRQ(reqName, [][2]string{{"tsize", "0"}})
-	_ = client.SetWriteDeadline(time.Now().Add(2 * time.Second))
+	_ = client.SetWriteDeadline(time.Now().Add(100 * time.Millisecond))
 	if _, err := client.WriteToUDP(rrq1, serverLaddr); err != nil {
 		t.Fatalf("send rrq1: %v", err)
 	}
@@ -193,7 +198,13 @@ func TestReplayAndTFTP(t *testing.T) {
 			t.Fatalf("read oack1: %v", err)
 		}
 		if n < 2 || buf[0] != 0 || buf[1] != 6 {
-			t.Fatalf("expected OACK for rrq1, got op=%d", int(buf[1]))
+			pkt, _ := tftp.ParsePacket(buf[:n])
+			switch ppkt := pkt.(type) {
+			case *tftp.Err:
+				t.Fatalf("expected OACK for rrq1, got ERROR code=%d msg=%q", ppkt.Code, ppkt.Message)
+			default:
+				t.Fatalf("expected OACK for rrq1, got op=%d", int(buf[1]))
+			}
 		}
 		sess1 = raddr
 		_ = sess1
@@ -201,14 +212,14 @@ func TestReplayAndTFTP(t *testing.T) {
 
 	// Second RRQ: tsize=0, blksize=1456 (server will OACK blksize=512)
 	rrq2 := buildRRQ(reqName, [][2]string{{"tsize", "0"}, {"blksize", "1456"}})
-	_ = client.SetWriteDeadline(time.Now().Add(2 * time.Second))
+	_ = client.SetWriteDeadline(time.Now().Add(100 * time.Millisecond))
 	if _, err := client.WriteToUDP(rrq2, serverLaddr); err != nil {
 		t.Fatalf("send rrq2: %v", err)
 	}
 	// Expect OACK from a (new) session
 	var sess2 *net.UDPAddr
 	for {
-		_ = client.SetReadDeadline(time.Now().Add(2 * time.Second))
+		_ = client.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
 		buf := make([]byte, 4096)
 		n, raddr, err := client.ReadFromUDP(buf)
 		if err != nil {
@@ -225,7 +236,7 @@ func TestReplayAndTFTP(t *testing.T) {
 	}
 	// Optionally ACK(0)
 	ack := func(block uint16) []byte { return []byte{0x00, 0x04, byte(block >> 8), byte(block)} }
-	_ = client.SetWriteDeadline(time.Now().Add(500 * time.Millisecond))
+	_ = client.SetWriteDeadline(time.Now().Add(100 * time.Millisecond))
 	_, _ = client.WriteToUDP(ack(0), sess2)
 
 	// Receive data from sess2 only
@@ -233,10 +244,11 @@ func TestReplayAndTFTP(t *testing.T) {
 	expectedBlock := uint16(1)
 	const serverBlockSize = 512
 	for {
-		_ = client.SetReadDeadline(time.Now().Add(3 * time.Second))
+		_ = client.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
 		buf := make([]byte, 4096)
 		n, raddr, err := client.ReadFromUDP(buf)
 		if err != nil {
+			logger.Error("TEST: read data", "err", err)
 			t.Fatalf("read data: %v", err)
 		}
 		if raddr == nil || !raddr.IP.Equal(sess2.IP) || raddr.Port != sess2.Port {

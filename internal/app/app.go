@@ -27,7 +27,11 @@ func New(cfg *Config) *App {
 }
 
 func listenUdp(network string, laddr *net.UDPAddr) (net.PacketConn, error) {
-	return net.ListenUDP(network, laddr)
+	conn, err := net.ListenUDP(network, laddr)
+	if err != nil {
+		return nil, fmt.Errorf("listen UDP: %w", err)
+	}
+	return conn, nil
 }
 
 // Start initializes and starts the TFTP proxy and ProxyDHCP services.

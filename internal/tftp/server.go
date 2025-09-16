@@ -6,7 +6,6 @@ import (
 	"io"
 	"log/slog"
 	"net"
-	"path"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -49,8 +48,8 @@ type Server struct {
 // logPacket captures a UDP packet via PacketLog using addressing derived from
 // the provided local UDP connection and the given remote address. No-ops if
 // PacketLog is nil or inputs are incomplete. Payload is defensively copied.
-func (s *Server) logPacket(conn net.PacketConn, dir capture.Direction, remote net.Addr, note string, payload []byte) {
-	if s == nil || s.PacketLog == nil || conn == nil || remote == nil {
+func (s *Server) logPacket(conn net.PacketConn, dir capture.Direction, remote net.UDPAddr, note string, payload []byte) {
+	if s == nil || s.PacketLog == nil || conn == nil {
 		return
 	}
 	lip := ""
@@ -59,12 +58,8 @@ func (s *Server) logPacket(conn net.PacketConn, dir capture.Direction, remote ne
 		lip = la.IP.String()
 		lport = la.Port
 	}
-	rip := ""
-	rport := 0
-	if ra, ok := remote.(*net.UDPAddr); ok && ra != nil {
-		rip = ra.IP.String()
-		rport = ra.Port
-	}
+	rip := remote.IP.String()
+	rport := remote.Port
 	// Copy payload to decouple from caller's buffer reuse
 	cp := append([]byte(nil), payload...)
 	s.PacketLog.Log(capture.MakePacket(
@@ -125,7 +120,7 @@ func (s *Server) BoundPort() int {
 func (s *Server) serve() {
 	buf := make([]byte, 2048)
 	for {
-		n, raddr, err := s.conn.ReadFrom(buf)
+		pkt, n, raddr, err := readFromConn(s.conn, buf, nil)
 		if err != nil {
 			// Suppress expected errors when the socket is closed on shutdown.
 			if isNetClosed(err) {
@@ -134,15 +129,13 @@ func (s *Server) serve() {
 			s.Logger.Error(fmt.Sprintf("TFTP: read error: %v", err))
 			return
 		}
-		// Ensure UDP address
-		udpRaddr, _ := raddr.(*net.UDPAddr)
 		// Packet capture: inbound request to port 69
-		s.logPacket(s.conn, capture.DirIn, raddr, "rrq", buf[:n])
-		// Handle each request in its own goroutine
-		pkt := make([]byte, n)
-		copy(pkt, buf[:n])
-		if udpRaddr != nil {
-			go s.handleRRQ(pkt, udpRaddr)
+		switch rrq := pkt.(type) {
+		case *ReadReq:
+			s.logPacket(s.conn, capture.DirIn, *raddr, "rrq", buf[:n])
+			go s.handleRRQ(rrq, raddr)
+		default:
+			s.Logger.Warn(fmt.Sprintf("TFTP: ignoring unsupported packet type from %s: %T", raddr.String(), pkt))
 		}
 	}
 }
@@ -158,76 +151,41 @@ func isNetClosed(err error) bool {
 	return strings.Contains(err.Error(), "use of closed network connection")
 }
 
-const (
-	opRRQ   = 1
-	opDATA  = 3
-	opACK   = 4
-	opERROR = 5
-	opOACK  = 6 // RFC 2347
-)
+func readFromConn(conn net.PacketConn, buf []byte, deadline *time.Time) (Packet, int, *net.UDPAddr, error) {
+	if deadline != nil {
+		if err := conn.SetReadDeadline(*deadline); err != nil {
+			return nil, 0, nil, fmt.Errorf("set read deadline: %w", err)
+		}
+	}
+	n, raddr, err := conn.ReadFrom(buf)
+	if err != nil {
+		return nil, 0, nil, fmt.Errorf("read from: %w", err)
+	}
+	rudp, ok := raddr.(*net.UDPAddr)
+	if !ok || rudp == nil {
+		return nil, 0, nil, fmt.Errorf("read from: not UDP raddr")
+	}
+	pkt, err := ParsePacket(buf[:n])
+	if err != nil {
+		return nil, 0, nil, fmt.Errorf("parse packet: %w", err)
+	}
+	return pkt, n, rudp, nil
+}
 
-func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
-	// Parse minimal RRQ: | 2 bytes opcode | filename 0 | mode 0 | [opt 0 val 0] ...
-	if len(req) < 4 || (int(req[0])<<8|int(req[1])) != opRRQ {
-		return
-	}
+func (s *Server) handleRRQ(req *ReadReq, client *net.UDPAddr) {
 	sid := atomic.AddUint64(&s.nextID, 1)
-	// Extract zero-terminated strings
-	i := 2
-	nextz := func() (string, bool) {
-		if i >= len(req) {
-			return "", false
-		}
-		j := i
-		for j < len(req) && req[j] != 0 {
-			j++
-		}
-		if j >= len(req) {
-			return "", false
-		}
-		s := string(req[i:j])
-		i = j + 1
-		return s, true
-	}
-	filename, ok := nextz()
-	if !ok || filename == "" {
-		s.sendError(client, 0, "malformed RRQ")
-		return
-	}
-	mode, ok := nextz()
-	if !ok || mode == "" {
-		s.sendError(client, 0, "malformed RRQ mode")
-		return
-	}
-	if strings.ToLower(mode) != "octet" {
-		s.Logger.Warn(fmt.Sprintf("TFTP: sid=%d client=%s unsupported mode=%q for file=%q", sid, client.String(), mode, filename))
+	if strings.ToLower(req.Mode) != "octet" {
+		s.Logger.Warn(fmt.Sprintf("TFTP: sid=%d client=%s unsupported mode=%q for file=%q", sid, client.String(), req.Mode, req.Filename))
 		s.sendError(client, 0, "only octet mode supported")
 		return
 	}
 
-	// Parse any options (key/value zero-terminated pairs)
-	opts := map[string]string{}
-	for i < len(req) {
-		k, ok := nextz()
-		if !ok || k == "" {
-			break
-		}
-		v, ok := nextz()
-		if !ok {
-			break
-		}
-		opts[strings.ToLower(k)] = v
-	}
-
-	// Sanitize path: avoid path traversal; use last element
-	cleanName := path.Base(strings.TrimLeft(filename, "/\\"))
-
-	s.Logger.Info(fmt.Sprintf("TFTP: sid=%d client=%s rrq file=%q clean=%q mode=%s opts=%v", sid, client.String(), filename, cleanName, strings.ToLower(mode), opts))
+	s.Logger.Info(fmt.Sprintf("TFTP: sid=%d client=%s rrq file=%q mode=%s opts=%v", sid, client.String(), req.Filename, strings.ToLower(req.Mode), req.Options))
 
 	// Obtain bootfile from provider
-	body, size, err := s.Provider.GetBootfile(cleanName)
+	body, size, err := s.Provider.GetBootfile(req.Filename)
 	if err != nil {
-		s.Logger.Error(fmt.Sprintf("TFTP: sid=%d provider fetch failed file=%q err=%v", sid, cleanName, err))
+		s.Logger.Error(fmt.Sprintf("TFTP: sid=%d provider fetch failed file=%q err=%v", sid, req.Filename, err))
 		s.sendError(client, 1, "file not found")
 		return
 	}
@@ -237,6 +195,7 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
 
 	// Create session socket bound to ephemeral port
 	sessConn, err := s.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
+	s.Logger.Info(fmt.Sprintf("TFTP: sid=%d listening at %s", sid, sessConn.LocalAddr()))
 	if err != nil {
 		s.Logger.Error(fmt.Sprintf("TFTP: sid=%d failed to open session socket: %v", sid, err))
 		s.sendError(client, 0, "internal error")
@@ -247,44 +206,54 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
 	}()
 	s.Logger.Info(fmt.Sprintf("TFTP: sid=%d session started laddr=%s raddr=%s size=%d", sid, sessConn.LocalAddr().String(), client.String(), size))
 
-	// no special demux; client should send ACKs to the session port
-
 	// Option negotiation: if client requested options, send OACK for tsize/blksize
 	// We fix blksize=512; if requested a different value, we still respond with 512.
-	wantOACK := len(opts) > 0
-	if wantOACK {
-		oackMap := map[string]string{
-			"tsize": fmt.Sprintf("%d", size),
+	if len(req.Options) > 0 {
+		oackMap := map[string]string{}
+		if _, has := req.Options["tsize"]; has {
+			oackMap["tsize"] = fmt.Sprintf("%d", size)
 		}
-		if _, has := opts["blksize"]; has {
-			// echo blksize we can do (512)
+		if _, has := req.Options["blksize"]; has {
 			oackMap["blksize"] = "512"
 		}
-		s.Logger.Debug(fmt.Sprintf("TFTP: sid=%d oack request opts=%v respond=%v", sid, opts, oackMap))
+		s.Logger.Info(fmt.Sprintf("TFTP: sid=%d oack request opts=%v respond=%v", sid, req.Options, oackMap))
 		oack := buildOACK(oackMap)
 		if err := sessConn.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
 			s.Logger.Warn(fmt.Sprintf("TFTP: sid=%d set write deadline (OACK) error: %v", sid, err))
 		}
 		if _, err := sessConn.WriteTo(oack, client); err == nil {
-			s.logPacket(sessConn, capture.DirOut, client, "oack", oack)
+			s.logPacket(sessConn, capture.DirOut, *client, "oack", oack)
 		}
+		s.Logger.Info(fmt.Sprintf("TFTP: sid=%d sent oack opts=%v respond=%v", sid, req.Options, oackMap))
+		s.Logger.Info(fmt.Sprintf("TFTP: sid=%d waiting for ack(0) opts=%v respond=%v", sid, req.Options, oackMap))
 		// Wait for ACK block 0
 		buf := make([]byte, 1500)
-		// Wait briefly for ACK(0). Some clients immediately accept DATA after OACK
-		// without sending ACK(0), so keep this timeout short to avoid delaying
-		// the first DATA block in that case.
-		if err := sessConn.SetReadDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
-			s.Logger.Warn(fmt.Sprintf("TFTP: sid=%d set read deadline (OACK ACK wait) error: %v", sid, err))
-		}
-		n, raddr, err := sessConn.ReadFrom(buf)
-		rudp, _ := raddr.(*net.UDPAddr)
-		if err != nil || rudp == nil || !rudp.IP.Equal(client.IP) || rudp.Port != client.Port {
-			s.Logger.Debug(fmt.Sprintf("TFTP: sid=%d no ACK(0) after OACK from %s err=%v", sid, client.String(), err))
-			// proceed anyway (some clients may accept data immediately)
-		} else if n >= 4 && (int(buf[0])<<8|int(buf[1])) == opACK && int(buf[2]) == 0 && int(buf[3]) == 0 {
-			// ok
-			s.Logger.Debug(fmt.Sprintf("TFTP: sid=%d received ACK(0) after OACK", sid))
-			s.logPacket(sessConn, capture.DirIn, raddr, "ack(0)", buf[:n])
+		deadline := time.Now().Add(100 * time.Millisecond)
+		for {
+			// readFromConn
+			pkt, n, raddr, err := readFromConn(sessConn, buf, &deadline)
+			if err != nil {
+				if strings.Contains(err.Error(), "i/o timeout") {
+					// read timed out
+					s.Logger.Info(fmt.Sprintf("TFTP: sid=%d oack read timed out %s", sid, s.conn.LocalAddr().String()))
+					break
+				}
+				if !isNetClosed(err) {
+					s.Logger.Warn(fmt.Sprintf("TFTP: sid=%d oack read err=%v", sid, err))
+				}
+				continue
+			}
+			switch ack := pkt.(type) {
+			case *Ack:
+				if ack.Block == 0 {
+					s.Logger.Info(fmt.Sprintf("TFTP: sid=%d received ACK(0) after OACK", sid))
+					s.logPacket(sessConn, capture.DirIn, *raddr, "ack(0)", buf[:n])
+					break
+				}
+			default:
+				s.Logger.Info(fmt.Sprintf("TFTP: sid=%d received wrong pkt type waiting for OACK", sid))
+				continue
+			}
 		}
 	}
 
@@ -313,7 +282,7 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
 
 		// Send DATA and wait for matching ACK
 		pkt := make([]byte, 4+len(data))
-		pkt[0], pkt[1] = 0, opDATA
+		pkt[0], pkt[1] = 0, byte(DATA)
 		pkt[2] = byte(blockNum >> 8)
 		pkt[3] = byte(blockNum)
 		copy(pkt[4:], data)
@@ -329,13 +298,13 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
 				// retry on transient errors; next attempt will resend
 				continue
 			}
-			s.logPacket(sessConn, capture.DirOut, client, fmt.Sprintf("data(block=%d)", blockNum), pkt)
+			s.Logger.Debug("TFTP: sent block", "block", blockNum)
+			s.logPacket(sessConn, capture.DirOut, *client, fmt.Sprintf("data(block=%d)", blockNum), pkt)
+
 			// Wait for ACK
 			buf := make([]byte, 1500)
-			if err := sessConn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
-				s.Logger.Warn(fmt.Sprintf("TFTP: sid=%d set read deadline (ACK wait) error: %v", sid, err))
-			}
-			n, raddr, err := sessConn.ReadFrom(buf)
+			deadline := time.Now().Add(2 * time.Second)
+			pkt, n, raddr, err := readFromConn(sessConn, buf, &deadline)
 			if err != nil {
 				if attempt+1 < maxRetry {
 					s.Logger.Warn(fmt.Sprintf("TFTP: sid=%d timeout waiting ACK for block=%d attempt=%d/%d", sid, blockNum, attempt+1, maxRetry))
@@ -343,16 +312,15 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
 				// retry
 				continue
 			}
-			rudp, _ := raddr.(*net.UDPAddr)
-			if rudp == nil || !rudp.IP.Equal(client.IP) || rudp.Port != client.Port {
+			if !raddr.IP.Equal(client.IP) || raddr.Port != client.Port {
 				// ignore stray
 				attempt--
 				continue
 			}
-			if n >= 4 && (int(buf[0])<<8|int(buf[1])) == opACK {
-				ackNum := uint16(buf[2])<<8 | uint16(buf[3])
-				if ackNum == blockNum {
-					s.logPacket(sessConn, capture.DirIn, raddr, fmt.Sprintf("ack(%d)", ackNum), buf[:n])
+			switch ack := pkt.(type) {
+			case *Ack:
+				if ack.Block == blockNum {
+					s.logPacket(sessConn, capture.DirIn, *raddr, fmt.Sprintf("ack(%d)", ack.Block), buf[:n])
 					acked = true
 					break // proceed to next block
 				}
@@ -361,6 +329,7 @@ func (s *Server) handleRRQ(req []byte, client *net.UDPAddr) {
 				continue
 			}
 		}
+
 		if !acked {
 			// Give up on this transfer after max retries without ACK
 			s.Logger.Warn(fmt.Sprintf("TFTP: sid=%d no ACK for block=%d from %s after %d attempts; aborting session", sid, blockNum, client.String(), maxRetry))
@@ -389,7 +358,7 @@ func (s *Server) sendError(dst *net.UDPAddr, code int, msg string) {
 	}
 	// ERROR packet: | 0 5 | code(2) | msg | 0 |
 	b := make([]byte, 4+len(msg)+1)
-	b[0], b[1] = 0, opERROR
+	b[0], b[1] = 0, byte(ERROR)
 	b[2] = byte(code >> 8)
 	b[3] = byte(code)
 	copy(b[4:], []byte(msg))
@@ -397,7 +366,7 @@ func (s *Server) sendError(dst *net.UDPAddr, code int, msg string) {
 		s.Logger.Warn(fmt.Sprintf("TFTP: set write deadline (ERROR pkt) error: %v", err))
 	}
 	if _, err := s.conn.WriteTo(b, dst); err == nil {
-		s.logPacket(s.conn, capture.DirOut, dst, "error", b)
+		s.logPacket(s.conn, capture.DirOut, *dst, "error", b)
 	}
 	s.Logger.Info(fmt.Sprintf("TFTP: sent ERROR to %s code=%d msg=%q", dst.String(), code, msg))
 }
@@ -405,7 +374,7 @@ func (s *Server) sendError(dst *net.UDPAddr, code int, msg string) {
 func buildOACK(kv map[string]string) []byte {
 	// OACK packet: | 0 6 | k 0 v 0 ... |
 	// Note: caller should ensure deterministic key order if needed; not required here.
-	out := []byte{0, opOACK}
+	out := []byte{0, byte(OACK)}
 	for k, v := range kv {
 		out = append(out, []byte(k)...)
 		out = append(out, 0)
