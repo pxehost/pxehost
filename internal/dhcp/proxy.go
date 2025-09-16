@@ -324,37 +324,19 @@ func formatDHCPOptions(m map[byte][]byte) string {
 			j--
 		}
 	}
-	const maxOptionLogChars = 100
 	var out string
-	for _, ik := range keys {
+	for i, ik := range keys {
 		k := byte(ik)
 		v := m[k]
 		name := dhcpOptionName(k)
 		decoded := decodeDHCPOption(k, v)
-		line := fmt.Sprintf("  - %s (%d): %s | hex=%s", name, k, decoded, hexBytes(v))
-		out += truncateString(line, maxOptionLogChars) + "\n"
+		line := fmt.Sprintf("%s (%d): %s", name, k, decoded)
+		if i > 0 {
+			out += "\n"
+		}
+		out += line
 	}
 	return out
-}
-
-// truncateString returns s limited to max characters; adds an ellipsis when truncated.
-func truncateString(s string, max int) string {
-	if max <= 0 || len(s) <= max {
-		return s
-	}
-	// Ensure we do not split in the middle of a multi-byte rune.
-	// Walk back to the start of the last full rune if needed.
-	// For speed, assume most content is ASCII; only adjust if necessary.
-	end := max
-	for end > 0 && (s[end]&0xC0) == 0x80 { // continuation byte 10xxxxxx
-		end--
-	}
-	// Add a compact truncation marker to indicate omitted length
-	omitted := len([]rune(s[end:]))
-	if omitted > 0 {
-		return s[:end] + fmt.Sprintf("…(+%d)", omitted)
-	}
-	return s[:end] + "…"
 }
 
 func dhcpOptionName(code byte) string {
@@ -380,7 +362,11 @@ func dhcpOptionName(code byte) string {
 	case OptClientArch:
 		return "Client System Architecture"
 	case OptClientMachineID:
-		return "Client Network Interface Identifier"
+		return "Client Machine Identifier"
+	case OptUserClass:
+		return "User Class"
+	case OptNIC:
+		return "Client Network Device Interface Identifier"
 	default:
 		return fmt.Sprintf("Option %d", code)
 	}
@@ -406,18 +392,18 @@ func decodeDHCPOption(code byte, v []byte) string {
 			}
 			return "[" + joinComma(items) + "]"
 		}
-	case OptMaxMessageSize: // max message size
+	case OptMaxMessageSize:
 		if len(v) == 2 {
 			return fmt.Sprintf("%d", binary.BigEndian.Uint16(v))
 		}
-	case OptClientID: // client identifier
+	case OptClientID, OptUserClass:
 		return fmt.Sprintf("%s (ascii=%q)", hexBytes(v), printableASCII(v))
 	case OptClientArch: // client arch
 		if len(v) >= 2 {
 			arch := uint16(v[0])<<8 | uint16(v[1])
 			return fmt.Sprintf("0x%04x", arch)
 		}
-	case OptClientMachineID: // Client Machine Identifier (UUID type 0)
+	case OptClientMachineID:
 		if len(v) == 17 && v[0] == 0 { // type 0, UUID
 			return fmt.Sprintf("uuid=%s", hexBytes(v[1:]))
 		}
