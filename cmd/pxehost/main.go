@@ -35,7 +35,11 @@ func main() {
 		app.WithDHCPBroadcastPort(68),
 		app.WithPXEPort(4011),
 		app.WithTFTPPort(69),
-		app.WithBootfileProvider(tftp.NewHTTPProvider("https://boot.netboot.xyz/ipxe/")),
+		app.WithBootfileProvider(
+			tftp.NewCachedBootfileProvider(
+				tftp.NewHTTPProvider("https://boot.netboot.xyz/ipxe/"),
+			),
+		),
 		app.WithAdvertisedIP(lanIP),
 		app.WithGeteuid(os.Geteuid),
 		app.WithLogger(slog.Default()),
