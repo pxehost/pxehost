@@ -25,7 +25,7 @@ CHANGED=$(git diff --name-only)
 TOUCHED=$(comm -12 <(echo "$STAGED" | sort) <(echo "$CHANGED" | sort))
 
 if [ -n "$TOUCHED" ]; then
-  echo "The following staged files were modified by ESLint:"
+  echo "The following staged files were modified by golangci-lint:"
   echo "$TOUCHED"
   echo "Please restage them and try committing again."
   exit 1

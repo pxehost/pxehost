@@ -136,7 +136,7 @@ func (p *Packet) WithServerID(ip net.IP) *Packet {
 func (p *Packet) WithMaxMessageSize(size uint16) *Packet {
 	buf := make([]byte, 2)
 	binary.BigEndian.PutUint16(buf, size)
-	p.Options = append(p.Options, Option{Code: 57, Data: buf})
+	p.Options = append(p.Options, Option{Code: OptMaxMessageSize, Data: buf})
 	return p
 }
 
@@ -321,7 +321,7 @@ func (p *Packet) ToCodeString() string {
 	var sb strings.Builder
 
 	// Constructor with op, xid, mac
-	fmt.Fprintf(&sb, "pkt := dhcp.New(%d, 0x%x, %s)\n", p.Op, p.Xid, hwLit(p.Chaddr[:p.HLen]))
+	fmt.Fprintf(&sb, "pkt := dhcp.NewPacket(%d, 0x%x, %s)\n", p.Op, p.Xid, hwLit(p.Chaddr[:p.HLen]))
 
 	// Non-default header fields
 	if p.Hops != 0 {

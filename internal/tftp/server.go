@@ -192,7 +192,7 @@ func (s *Server) handleRRQ(req *ReadReq, client *net.UDPAddr) {
 		)
 
 		if !acked {
-			s.Logger.Info(fmt.Sprintf("TFTP: sid=%d did not receive ACK(0); closing session", sid))
+			s.Logger.Info(fmt.Sprintf("TFTP: sid=%d did not receive ACK(0); trying DATA(1)", sid))
 		}
 	}
 
@@ -289,7 +289,7 @@ func (s *Server) retrySendAndAwaitAck(
 			s.Logger.Warn(fmt.Sprintf("TFTP: sid=%d send error to %s: %v", sid, dst.String(), err))
 			continue
 		}
-		s.logPacket(s.conn, capture.DirOut, *dst, label, raw)
+		s.logPacket(conn, capture.DirOut, *dst, label, raw)
 
 		// await response
 		deadline := time.Now().Add(readDeadline)
@@ -309,7 +309,7 @@ func (s *Server) retrySendAndAwaitAck(
 		switch ack := pkt.(type) {
 		case *Ack:
 			if ack.Block == blockNum {
-				s.logPacket(s.conn, capture.DirIn, *raddr, fmt.Sprintf("ack(%d)", blockNum), buf[:n])
+				s.logPacket(conn, capture.DirIn, *raddr, fmt.Sprintf("ack(%d)", blockNum), buf[:n])
 				return true
 			}
 			attempt--
