@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/srcreigh/pxehost/internal/capture"
@@ -65,16 +64,8 @@ func (p *ProxyDHCP) StartAsync() error {
 	p.conn4011 = c4011
 
 	// Allow sending to broadcast address (255.255.255.255)
-	if rc, err := p.conn.SyscallConn(); err == nil {
-		_ = rc.Control(func(fd uintptr) {
-			_ = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_BROADCAST, 1)
-		})
-	}
-	if rc, err := p.conn4011.SyscallConn(); err == nil {
-		_ = rc.Control(func(fd uintptr) {
-			_ = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_BROADCAST, 1)
-		})
-	}
+	setBroadcastSocketOption(p.conn)
+	setBroadcastSocketOption(p.conn4011)
 
 	p.Logger.Info("ProxyDHCP listening", "dhcp_port", dhcpPort, "pxe_port", pxePort, "tftp", p.TFTPServerIP)
 	go p.serve(p.conn, dhcpPort)
