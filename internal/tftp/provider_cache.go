@@ -2,6 +2,7 @@ package tftp
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"sync"
 	"time"
@@ -54,13 +55,17 @@ func (c *cachedBootfileProvider) GetBootfile(filename string) (io.ReadCloser, in
 
 	rc, _, err := c.inner.GetBootfile(filename)
 	if err != nil {
-		return nil, -1, err
+		return nil, -1, fmt.Errorf("provider get bootfile %q: %w", filename, err)
 	}
-	defer rc.Close()
+	defer func() {
+		if cerr := rc.Close(); cerr != nil {
+			_ = cerr
+		}
+	}()
 
 	data, err := io.ReadAll(rc)
 	if err != nil {
-		return nil, -1, err
+		return nil, -1, fmt.Errorf("read bootfile %q: %w", filename, err)
 	}
 
 	entry := &cacheEntry{data: data, size: int64(len(data))}

@@ -8,9 +8,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/srcreigh/pxehost/internal/app"
-	"github.com/srcreigh/pxehost/internal/logging"
-	"github.com/srcreigh/pxehost/internal/tftp"
+	"github.com/pxehost/pxehost/internal/app"
+	"github.com/pxehost/pxehost/internal/logging"
+	"github.com/pxehost/pxehost/internal/tftp"
 )
 
 func main() {

@@ -94,74 +94,74 @@ func Serialize(p Packet) ([]byte, error) {
 	switch v := p.(type) {
 	case *ReadReq:
 		if _, err := buf.WriteString(v.Filename); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("write rrq filename: %w", err)
 		}
 		buf.WriteByte(0)
 		if _, err := buf.WriteString(v.Mode); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("write rrq mode: %w", err)
 		}
 		buf.WriteByte(0)
 		for k, val := range v.Options {
 			if _, err := buf.WriteString(k); err != nil {
-				return nil, err
+				return nil, fmt.Errorf("write rrq opt key: %w", err)
 			}
 			buf.WriteByte(0)
 			if _, err := buf.WriteString(val); err != nil {
-				return nil, err
+				return nil, fmt.Errorf("write rrq opt value: %w", err)
 			}
 			buf.WriteByte(0)
 		}
 
 	case *WriteReq:
 		if _, err := buf.WriteString(v.Filename); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("write wrq filename: %w", err)
 		}
 		buf.WriteByte(0)
 		if _, err := buf.WriteString(v.Mode); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("write wrq mode: %w", err)
 		}
 		buf.WriteByte(0)
 		for k, val := range v.Options {
 			if _, err := buf.WriteString(k); err != nil {
-				return nil, err
+				return nil, fmt.Errorf("write wrq opt key: %w", err)
 			}
 			buf.WriteByte(0)
 			if _, err := buf.WriteString(val); err != nil {
-				return nil, err
+				return nil, fmt.Errorf("write wrq opt value: %w", err)
 			}
 			buf.WriteByte(0)
 		}
 
 	case *Data:
 		if err := binary.Write(buf, binary.BigEndian, v.Block); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("write data block: %w", err)
 		}
 		if _, err := buf.Write(v.Data); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("write data payload: %w", err)
 		}
 
 	case *Ack:
 		if err := binary.Write(buf, binary.BigEndian, v.Block); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("write ack block: %w", err)
 		}
 
 	case *Err:
 		if err := binary.Write(buf, binary.BigEndian, v.Code); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("write err code: %w", err)
 		}
 		if _, err := buf.WriteString(v.Message); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("write err message: %w", err)
 		}
 		buf.WriteByte(0)
 
 	case *OAck:
 		for k, val := range v.Options {
 			if _, err := buf.WriteString(k); err != nil {
-				return nil, err
+				return nil, fmt.Errorf("write oack opt key: %w", err)
 			}
 			buf.WriteByte(0)
 			if _, err := buf.WriteString(val); err != nil {
-				return nil, err
+				return nil, fmt.Errorf("write oack opt value: %w", err)
 			}
 			buf.WriteByte(0)
 		}

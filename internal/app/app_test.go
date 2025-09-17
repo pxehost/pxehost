@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/srcreigh/pxehost/internal/dhcp"
-	"github.com/srcreigh/pxehost/internal/logging"
-	"github.com/srcreigh/pxehost/internal/tftp"
+	"github.com/pxehost/pxehost/internal/dhcp"
+	"github.com/pxehost/pxehost/internal/logging"
+	"github.com/pxehost/pxehost/internal/tftp"
 )
 
 // mappedProvider implements tftp.BootfileProvider by mapping

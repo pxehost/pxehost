@@ -4,8 +4,8 @@ import (
 	"log/slog"
 	"net"
 
-	"github.com/srcreigh/pxehost/internal/capture"
-	"github.com/srcreigh/pxehost/internal/tftp"
+	"github.com/pxehost/pxehost/internal/capture"
+	"github.com/pxehost/pxehost/internal/tftp"
 )
 
 // Config holds runtime configuration for the PXE host and its dependencies.

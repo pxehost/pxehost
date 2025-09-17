@@ -1,3 +1,3 @@
-module github.com/srcreigh/pxehost
+module github.com/pxehost/pxehost
 
 go 1.24

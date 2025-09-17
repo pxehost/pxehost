@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/srcreigh/pxehost/internal/capture"
+	"github.com/pxehost/pxehost/internal/capture"
 )
 
 // ProxyDHCP is a minimal ProxyDHCP responder (PXE Boot Server Discovery).

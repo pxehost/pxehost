@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/srcreigh/pxehost/internal/capture"
+	"github.com/pxehost/pxehost/internal/capture"
 )
 
 // Minimal TFTP server that proxies RRQ (read) requests by fetching the
@@ -85,7 +85,6 @@ func (s *Server) serve() {
 	buf := make([]byte, 2048)
 	for {
 		pkt, n, raddr, err := readFromConn(s.conn, buf, nil)
-
 		if err != nil {
 			// Suppress expected errors when the socket is closed on shutdown.
 			if isNetClosed(err) {
@@ -280,7 +279,7 @@ func (s *Server) retrySendAndAwaitAck(
 		return false
 	}
 
-	jitter := time.Duration(rand.Int63n(int64(400*time.Millisecond)*2)) - 200*time.Millisecond
+	jitter := time.Duration(rand.Int63n(int64(400*time.Millisecond)*2)) - 200*time.Millisecond //nolint:gosec
 	writeDeadline := 1000 * time.Millisecond
 	readDeadline := 1000*time.Millisecond + jitter
 	for attempt := 0; attempt < maxAttempts; attempt++ {

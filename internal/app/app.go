@@ -3,8 +3,8 @@ package app
 import (
 	"fmt"
 
-	"github.com/srcreigh/pxehost/internal/dhcp"
-	"github.com/srcreigh/pxehost/internal/tftp"
+	"github.com/pxehost/pxehost/internal/dhcp"
+	"github.com/pxehost/pxehost/internal/tftp"
 )
 
 // App wires together the components to run the PXE host.
