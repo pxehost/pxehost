@@ -22,13 +22,16 @@ func main() {
 	// Configure slog default with pretty colorized formatter and source trimming.
 	slog.SetDefault(slog.New(logging.NewPrettyHandler(os.Stderr, &slog.HandlerOptions{AddSource: true})))
 
+	// Log the user and effective UID we're running as.
+	slog.Info("Running as non-root.", "user", os.Getenv("USER"), "euid", os.Geteuid())
+
 	// Discover LAN IP to advertise to PXE clients.
 	lanIP, err := outboundIP()
 	if err != nil {
 		slog.Error("Error detecting outbound IP", "err", err)
 		os.Exit(1)
 	}
-	slog.Info("Detected outbound IP", "ip", lanIP.String())
+	slog.Info("Detected outbound IP.", "ip", lanIP.String())
 
 	cfg := app.NewConfig(
 		app.WithDHCPPort(67),
