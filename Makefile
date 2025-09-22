@@ -36,4 +36,4 @@ build/%:
 	ext=$$( [ $$os = windows ] && echo .exe ); \
 	echo "-> $$os/$$arch"; \
 	GO111MODULE=on CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch \
-	go build -ldflags "$(LDFLAGS)" -o $(BINDIR)/$$os-$$arch/$(APP)$$ext ./cmd/pxehost
+	go build -ldflags "$(LDFLAGS)" -o $(BINDIR)/$(APP)-$$os-$$arch$$ext ./cmd/pxehost
