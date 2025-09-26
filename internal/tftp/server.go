@@ -1,6 +1,7 @@
 package tftp
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -137,6 +138,30 @@ func readFromConn(conn *net.UDPConn, buf []byte, deadline *time.Time) (Packet, i
 	return pkt, n, rudp, nil
 }
 
+var autoexecIPXE = []byte(`#!ipxe
+dhcp
+autoboot
+`)
+
+var localVarsIPXE = []byte(`#!ipxe
+# no local variables
+`)
+
+func (s *Server) getBootfile(filename string) (io.ReadCloser, int64, error) {
+	// Obtain bootfile from netboot
+	if strings.HasPrefix(filename, "netboot") {
+		return s.Provider.GetBootfile(filename)
+	}
+	if filename == "autoexec.ipxe" {
+		return io.NopCloser(bytes.NewReader(autoexecIPXE)), int64(len(autoexecIPXE)), nil
+	}
+	if strings.HasSuffix(filename, ".ipxe") {
+		// Return empty script as default for others
+		return io.NopCloser(bytes.NewReader(localVarsIPXE)), int64(len(localVarsIPXE)), nil
+	}
+	return nil, 0, fmt.Errorf("file %s not found", filename)
+}
+
 func (s *Server) handleRRQ(req *ReadReq, client *net.UDPAddr) {
 	sid := atomic.AddUint64(&s.nextID, 1)
 
@@ -150,8 +175,7 @@ func (s *Server) handleRRQ(req *ReadReq, client *net.UDPAddr) {
 	s.Logger.Info(fmt.Sprintf("TFTP: sid=%d received rrq client=%s file=%q opts=%v",
 		sid, client.String(), req.Filename, req.Options))
 
-	// Obtain bootfile from provider
-	body, size, err := s.Provider.GetBootfile(req.Filename)
+	body, size, err := s.getBootfile(req.Filename)
 	if err != nil {
 		s.Logger.Error(fmt.Sprintf("TFTP: sid=%d provider fetch failed file=%q err=%v", sid, req.Filename, err))
 		s.sendError(client, 1, "file not found")

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"runtime"
 	"strings"
 	"time"
 
@@ -39,8 +40,25 @@ type ProxyDHCP struct {
 func (p *ProxyDHCP) StartAsync() error {
 	dhcpPort := p.DHCPPort
 	pxePort := p.PXEPort
+
+	// Bind windows UDP servers to the LAN IP. Binding to 0.0.0.0
+	// sometimes doesn't work on windows.
+	//
+	// macOS doesn't let you bind port 67 to a specific IP without
+	// sudo, so this fix is Windows-only.
+	var bindAddr string
+	if runtime.GOOS == "windows" {
+		outboundIP, err := OutboundIP()
+		if err != nil {
+			return fmt.Errorf("proxydhcp: outbound IP: %w", err)
+		}
+		bindAddr = outboundIP.String()
+	} else {
+		bindAddr = ""
+	}
+
 	// Bind IPv4-only to receive IPv4 DHCP broadcasts
-	addr67, err := net.ResolveUDPAddr("udp4", ":"+itoa(dhcpPort))
+	addr67, err := net.ResolveUDPAddr("udp4", fmt.Sprintf("%s:%d", bindAddr, dhcpPort))
 	if err != nil {
 		return fmt.Errorf("proxydhcp: resolve :%d: %w", dhcpPort, err)
 	}
@@ -49,7 +67,7 @@ func (p *ProxyDHCP) StartAsync() error {
 		return fmt.Errorf("proxydhcp: listen :%d: %w", dhcpPort, err)
 	}
 	// Bind PXE service port (required)
-	addr4011, err := net.ResolveUDPAddr("udp4", ":"+itoa(pxePort))
+	addr4011, err := net.ResolveUDPAddr("udp4", fmt.Sprintf("%s:%d", bindAddr, pxePort))
 	if err != nil {
 		_ = c67.Close()
 		return fmt.Errorf("proxydhcp: resolve :%d: %w", pxePort, err)
@@ -71,6 +89,22 @@ func (p *ProxyDHCP) StartAsync() error {
 	go p.serve(p.conn, dhcpPort)
 	go p.serve(p.conn4011, pxePort)
 	return nil
+}
+
+// OutboundIP discovers the preferred outbound IPv4 address by opening
+// a UDP "connection" to a public IP. No packets are sent; the kernel
+// selects a route and binds a local address which we return.
+func OutboundIP() (net.IP, error) {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		return nil, fmt.Errorf("outboundIP dial: %w", err)
+	}
+	defer func() {
+		_ = conn.Close()
+	}()
+
+	localAddr := conn.LocalAddr().(*net.UDPAddr)
+	return localAddr.IP, nil
 }
 
 func (p *ProxyDHCP) Close() error {

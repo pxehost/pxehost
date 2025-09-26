@@ -3,12 +3,12 @@ package main
 import (
 	"fmt"
 	"log/slog"
-	"net"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/pxehost/pxehost/internal/app"
+	"github.com/pxehost/pxehost/internal/dhcp"
 	"github.com/pxehost/pxehost/internal/logging"
 	"github.com/pxehost/pxehost/internal/tftp"
 )
@@ -26,7 +26,7 @@ func main() {
 	slog.Info("Running as non-root.", "user", os.Getenv("USER"), "euid", os.Geteuid())
 
 	// Discover LAN IP to advertise to PXE clients.
-	lanIP, err := outboundIP()
+	lanIP, err := dhcp.OutboundIP()
 	if err != nil {
 		slog.Error("Error detecting outbound IP", "err", err)
 		os.Exit(1)
@@ -61,20 +61,4 @@ func main() {
 	fmt.Println()
 	slog.Info("shutting down...")
 	a.Stop()
-}
-
-// outboundIP discovers the preferred outbound IPv4 address by opening
-// a UDP "connection" to a public IP. No packets are sent; the kernel
-// selects a route and binds a local address which we return.
-func outboundIP() (net.IP, error) {
-	conn, err := net.Dial("udp", "8.8.8.8:80")
-	if err != nil {
-		return nil, fmt.Errorf("outboundIP dial: %w", err)
-	}
-	defer func() {
-		_ = conn.Close()
-	}()
-
-	localAddr := conn.LocalAddr().(*net.UDPAddr)
-	return localAddr.IP, nil
 }
