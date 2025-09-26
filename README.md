@@ -21,9 +21,8 @@ and then run it.
 
 Since `pxehost` does not need root, it will refuse to run as root.
 
-On Linux, `pxehost` needs the `CAP_NET_BIND_SERVICE` capability to bind
+- **On Linux**, `pxehost` needs the `CAP_NET_BIND_SERVICE` capability to bind
 ports 67 and 69. You can run `pxehost` with that cap using `systemd-run`:
-
 ```bash
 sudo systemd-run \
   --property User=$USER \
@@ -31,10 +30,10 @@ sudo systemd-run \
   --pty \
   ./pxehost
 ```
+- **On Windows**, you may get a firewall prompt and need to allow pxehost to run.
+- **On macOS** (Mojave or newer) it will just work.
 
-On Windows, you may get a firewall prompt and need to allow pxehost to run.
-
-On macOS (Mojave or newer) it will just work.
+Then, enable PXE boot on the other device, and boot into PXE.
 
 ## How does it work?
 
