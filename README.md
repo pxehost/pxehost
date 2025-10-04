@@ -35,6 +35,26 @@ sudo systemd-run \
 
 Then, enable PXE boot on the other device, and boot into PXE.
 
+### Running as root
+
+In some Linux environments, it's impossible to run pxehost rootless.
+
+If you are in such a situation, please build from source with the
+root check disabled:
+
+1. Install golang, git, make
+1. Clone the code
+1. Remove the root check at the top of `main` in [main.go](https://github.com/pxehost/pxehost/blob/master/cmd/pxehost/main.go).
+1. Run `make`
+
+If you need to cross compile, set GOOS and GOARCH:
+
+```sh
+GOOS=linux GOARCH=arm64 make
+```
+
+This outputs pxehost binary.
+
 ## How does it work?
 
 PXE boot uses DHCP and TFTP protocols. Upon booting into PXE, a
