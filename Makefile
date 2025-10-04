@@ -15,7 +15,7 @@ all: pxehost
 build: pxehost
 
 pxehost:
-	go build -trimpath -ldflags="-s -w" -o pxehost ./cmd/pxehost
+	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o pxehost ./cmd/pxehost
 
 clean:
 	rm -f pxehost
