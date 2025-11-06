@@ -30,6 +30,8 @@ sudo systemd-run \
   --pty \
   ./pxehost
 ```
+
+  On machines with SELinux (like Fedora), you might have to change the role of the binary to allow the execution. This can be done by invoking `chcon -t bin_t ./pxehost`.
 - **On Windows**, you may get a firewall prompt and need to allow pxehost to run.
 - **On macOS** (Mojave or newer) it will just work.
 
