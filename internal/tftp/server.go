@@ -15,21 +15,17 @@ import (
 	"github.com/pxehost/pxehost/internal/capture"
 )
 
-// Minimal TFTP server that proxies RRQ (read) requests by fetching the
-// requested filename from an upstream base URL (e.g. https://boot.netboot.xyz/ipxe/)
-// and streaming it to the client using standard 512-byte TFTP blocks.
+// TFTP is a simple UDP file transfer protocol. For the purposes of PXE boot,
+// we need to serve only a few files via TFTP:
+// - The .kpxe or .efi iPXE binary
+// - A script for iPXE, autoexec.ipxe, which runs before we load netboot.xyz
 //
-// It supports:
-// - RRQ in mode "octet"
-// - Optional OACK for tsize/blksize (blksize fixed to 512)
-// - Retries with simple timeouts
-//
-// This is intentionally small and purpose-built for serving the initial iPXE
-// binaries; it is not a full TFTP implementation.
+// This TFTP server only supports read requests.
 
 type Server struct {
-	Provider BootfileProvider
-	Logger   *slog.Logger
+	Provider      BootfileProvider
+	Logger        *slog.Logger
+	EnableIPv6DNS bool
 
 	conn   *net.UDPConn
 	nextID uint64
@@ -138,28 +134,32 @@ func readFromConn(conn *net.UDPConn, buf []byte, deadline *time.Time) (Packet, i
 	return pkt, n, rudp, nil
 }
 
-var autoexecIPXE = []byte(`#!ipxe
-dhcp
-autoboot
-`)
+func autoexecIPXE(enableIPv6DNS bool) []byte {
+	script := "#!ipxe\ndhcp\n"
+	if !enableIPv6DNS {
+		script += "set netX/dns6:hex 00\n"
+	}
+	return []byte(script + "chain https://boot.netboot.xyz/menu.ipxe\n")
+}
 
 var localVarsIPXE = []byte(`#!ipxe
 # no local variables
 `)
 
 func (s *Server) getBootfile(filename string) (io.ReadCloser, int64, error) {
-	// Obtain bootfile from netboot
-	if strings.HasPrefix(filename, "netboot") {
-		return s.Provider.GetBootfile(filename)
-	}
 	if filename == "autoexec.ipxe" {
-		return io.NopCloser(bytes.NewReader(autoexecIPXE)), int64(len(autoexecIPXE)), nil
+		script := autoexecIPXE(s.EnableIPv6DNS)
+		return io.NopCloser(bytes.NewReader(script)), int64(len(script)), nil
 	}
 	if strings.HasSuffix(filename, ".ipxe") {
 		// Return empty script as default for others
 		return io.NopCloser(bytes.NewReader(localVarsIPXE)), int64(len(localVarsIPXE)), nil
 	}
-	return nil, 0, fmt.Errorf("file %s not found", filename)
+	body, size, err := s.Provider.GetBootfile(filename)
+	if err != nil {
+		return nil, 0, fmt.Errorf("get bootfile %q: %w", filename, err)
+	}
+	return body, size, nil
 }
 
 func (s *Server) handleRRQ(req *ReadReq, client *net.UDPAddr) {

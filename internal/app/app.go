@@ -40,7 +40,13 @@ func (a *App) Start() error {
 		return fmt.Errorf("missing BootfileProvider in config")
 	}
 	// Start TFTP proxy
-	a.tftps = &tftp.Server{Provider: a.cfg.BootfileProvider, Port: a.cfg.TFTPPort, PacketLog: a.cfg.PacketLog, Logger: a.cfg.Logger}
+	a.tftps = &tftp.Server{
+		Provider:      a.cfg.BootfileProvider,
+		Port:          a.cfg.TFTPPort,
+		PacketLog:     a.cfg.PacketLog,
+		Logger:        a.cfg.Logger,
+		EnableIPv6DNS: a.cfg.EnableIPv6DNS,
+	}
 	if err := a.tftps.StartAsync(); err != nil {
 		return fmt.Errorf("tftp server start: %w", err)
 	}

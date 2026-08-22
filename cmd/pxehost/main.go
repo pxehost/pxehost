@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log/slog"
 	"os"
@@ -14,6 +15,9 @@ import (
 )
 
 func main() {
+	enableIPv6DNS := flag.Bool("enable-ipv6-dns", false, "enable IPv6 DNS")
+	flag.Parse()
+
 	if os.Geteuid() == 0 {
 		fmt.Println("Running as root is not supported, exiting.")
 		os.Exit(1)
@@ -38,9 +42,10 @@ func main() {
 		app.WithDHCPBroadcastPort(68),
 		app.WithPXEPort(4011),
 		app.WithTFTPPort(69),
+		app.WithEnableIPv6DNS(*enableIPv6DNS),
 		app.WithBootfileProvider(
 			tftp.NewCachedBootfileProvider(
-				tftp.NewHTTPProvider("https://boot.netboot.xyz/ipxe/"),
+				tftp.NewHTTPProvider("https://boot.ipxe.org/"),
 			),
 		),
 		app.WithAdvertisedIP(lanIP),
