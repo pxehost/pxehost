@@ -4,7 +4,8 @@
 
 `pxehost` is a no-configuration, Go-stdlib-only, rootless PXE server.
 
-It lets you boot a PC over LAN into the [iPXE](https://ipxe.org/) menu.
+It lets you boot a PC over LAN into the [netboot.xyz](https://github.com/netbootxyz/netboot.xyz)
+menu.
 
 **This is the easiest way to install Linux.**
 
@@ -21,8 +22,7 @@ and then run it.
 Since `pxehost` does not need root, it will refuse to run as root.
 
 - **On Linux**, `pxehost` needs the `CAP_NET_BIND_SERVICE` capability to bind
-  ports 67 and 69. You can run `pxehost` with that cap using `systemd-run`:
-
+ports 67 and 69. You can run `pxehost` with that cap using `systemd-run`:
 ```bash
 sudo systemd-run \
   --property User=$USER \
@@ -30,7 +30,6 @@ sudo systemd-run \
   --pty \
   ./pxehost
 ```
-
 - **On Windows**, you may get a firewall prompt and need to allow pxehost to run.
 - **On macOS** (Mojave or newer) it will just work.
 
@@ -79,9 +78,13 @@ DHCP options which tell pxehost what type of file to use.
 The PXE firmware sees the DHCP options that `pxehost` sends, and uses
 the TFTP protocol to get the boot file.
 
-TFTP is a UDP-based file transfer protocol. `pxehost` downloads an
-architecture-appropriate iPXE image from https://boot.ipxe.org and forwards it
-to the boot loader. EFI clients receive iPXE's `ipxe-legacy.efi` variant, which
-preserves USB keyboard support.
+TFTP is a UDP-based file transfer protocol. `pxehost` downloads the
+boot file from https://netboot.xyz and forwards the file via TFTP to
+the boot loader.
 
-The iPXE image supports HTTPS and then loads the netboot.xyz menu.
+The netboot.xyz boot file is a small iPXE blob. It supports HTTPS.
+It loads another blob for the netboot.xyz menu.
+
+The netboot.xyz menu has tons of Linux installers, Live CDs, and other
+OS's. It downloads and runs the OS files automatically (`pxehost` is not
+involved at that point anymore)
