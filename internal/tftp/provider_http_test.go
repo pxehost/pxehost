@@ -16,7 +16,7 @@ func TestHTTPProviderPreservesBootfileDirectory(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	body, size, err := NewHTTPProvider(server.URL).GetBootfile("x86_64-efi/ipxe-legacy.efi")
+	body, size, err := NewHTTPProvider(server.URL).GetBootfile("x86_64-efi-ipxe-legacy.efi")
 	if err != nil {
 		t.Fatalf("GetBootfile() error = %v", err)
 	}

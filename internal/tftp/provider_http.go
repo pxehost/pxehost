@@ -14,6 +14,16 @@ type HTTPProvider struct {
 	Base string // e.g. https://boot.ipxe.org/
 }
 
+var flatIPXEBootfiles = map[string]string{
+	"i386-efi-ipxe-legacy.efi":    "i386-efi/ipxe-legacy.efi",
+	"x86_64-efi-ipxe-legacy.efi":  "x86_64-efi/ipxe-legacy.efi",
+	"arm32-efi-ipxe-legacy.efi":   "arm32-efi/ipxe-legacy.efi",
+	"arm64-efi-ipxe-legacy.efi":   "arm64-efi/ipxe-legacy.efi",
+	"riscv32-efi-ipxe-legacy.efi": "riscv32-efi/ipxe-legacy.efi",
+	"riscv64-efi-ipxe-legacy.efi": "riscv64-efi/ipxe-legacy.efi",
+	"loong64-efi-ipxe-legacy.efi": "loong64-efi/ipxe-legacy.efi",
+}
+
 // NewHTTPProvider constructs an HTTPProvider with the given base URL.
 func NewHTTPProvider(base string) *HTTPProvider {
 	if base != "" && !strings.HasSuffix(base, "/") {
@@ -28,6 +38,9 @@ func (p *HTTPProvider) GetBootfile(filename string) (io.ReadCloser, int64, error
 		return nil, 0, fmt.Errorf("http provider: missing base URL")
 	}
 	name := strings.TrimLeft(filename, "/\\")
+	if upstreamName, ok := flatIPXEBootfiles[name]; ok {
+		name = upstreamName
+	}
 	url := p.Base + name
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
