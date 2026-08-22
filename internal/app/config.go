@@ -15,6 +15,7 @@ type Config struct {
 	ProxyDHCPPort    int                   // PXE service listen port (typically 4011)
 	TFTPPort         int                   // TFTP listen port (typically 69)
 	BootfileProvider tftp.BootfileProvider // supplies bootfiles for TFTP server
+	EnableIPv6DNS    bool                  // retain IPv6 DNS in autoexec.ipxe
 	AdvertisedIP     net.IP                // IPv4 advertised to clients (TFTP server IP)
 	PacketLog        capture.PacketLogger  // optional: packet logger implementation
 	Geteuid          func() int            // used for permission checks
@@ -50,6 +51,11 @@ func WithTFTPPort(p int) Option { return func(c *Config) { c.TFTPPort = p } }
 // WithBootfileProvider sets the provider used by the TFTP server to fetch files.
 func WithBootfileProvider(p tftp.BootfileProvider) Option {
 	return func(c *Config) { c.BootfileProvider = p }
+}
+
+// WithEnableIPv6DNS retains IPv6 DNS configuration in autoexec.ipxe.
+func WithEnableIPv6DNS(enabled bool) Option {
+	return func(c *Config) { c.EnableIPv6DNS = enabled }
 }
 
 // WithAdvertisedIP sets the IPv4 address advertised to clients (TFTP server IP).

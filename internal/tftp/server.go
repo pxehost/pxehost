@@ -23,8 +23,9 @@ import (
 // This TFTP server only supports read requests.
 
 type Server struct {
-	Provider BootfileProvider
-	Logger   *slog.Logger
+	Provider      BootfileProvider
+	Logger        *slog.Logger
+	EnableIPv6DNS bool
 
 	conn   *net.UDPConn
 	nextID uint64
@@ -133,10 +134,13 @@ func readFromConn(conn *net.UDPConn, buf []byte, deadline *time.Time) (Packet, i
 	return pkt, n, rudp, nil
 }
 
-var autoexecIPXE = []byte(`#!ipxe
-dhcp
-autoboot
-`)
+func autoexecIPXE(enableIPv6DNS bool) []byte {
+	script := "#!ipxe\ndhcp\n"
+	if !enableIPv6DNS {
+		script += "set netX/dns6:hex 00\n"
+	}
+	return []byte(script + "chain https://boot.netboot.xyz/menu.ipxe\n")
+}
 
 var localVarsIPXE = []byte(`#!ipxe
 # no local variables
@@ -144,7 +148,8 @@ var localVarsIPXE = []byte(`#!ipxe
 
 func (s *Server) getBootfile(filename string) (io.ReadCloser, int64, error) {
 	if filename == "autoexec.ipxe" {
-		return io.NopCloser(bytes.NewReader(autoexecIPXE)), int64(len(autoexecIPXE)), nil
+		script := autoexecIPXE(s.EnableIPv6DNS)
+		return io.NopCloser(bytes.NewReader(script)), int64(len(script)), nil
 	}
 	if strings.HasSuffix(filename, ".ipxe") {
 		// Return empty script as default for others
