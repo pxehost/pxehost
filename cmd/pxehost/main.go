@@ -40,7 +40,7 @@ func main() {
 		app.WithTFTPPort(69),
 		app.WithBootfileProvider(
 			tftp.NewCachedBootfileProvider(
-				tftp.NewHTTPProvider("https://boot.netboot.xyz/ipxe/"),
+				tftp.NewHTTPProvider("https://boot.ipxe.org/"),
 			),
 		),
 		app.WithAdvertisedIP(lanIP),

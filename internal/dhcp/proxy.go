@@ -238,29 +238,21 @@ func (p *ProxyDHCP) handle(conn *net.UDPConn, req []byte, src *net.UDPAddr, port
 		}
 	}
 
-	// Determine client architecture (option 93). Default to UEFI x86_64 if unknown.
+	// Determine client architecture (option 93). Default to BIOS if unknown.
 	arch := uint16(0x0000)
 	if v, ok := inOpts[OptClientArch]; ok && len(v) >= 2 {
 		arch = uint16(v[0])<<8 | uint16(v[1])
 	}
 
-	// First stage - PXE BIOS firmware needs the .efi/.kpxe TFTP bootfile
-	// Second stage - iPXE (HTTP-capable) firmware gets HTTPS link to menu.ipxe
+	// First stage - PXE firmware gets an architecture-specific TFTP bootfile.
+	// Second stage - iPXE (HTTP-capable) firmware gets an HTTPS boot script.
 	bootfile := ""
 	// If client identifies as iPXE via Option 77 (User Class),
 	// provide an iPXE script URL over HTTPS instead of TFTP bootfile.
 	if uc, ok := inOpts[OptUserClass]; ok && bytes.Contains(uc, []byte("iPXE")) {
 		bootfile = "https://boot.netboot.xyz/menu.ipxe"
 	} else {
-		// PXE BIOS step -- need to specify TFTP filename.
-		// Choose bootfile based on arch.
-		// 0 = Intel x86PC (BIOS);
-		// 7,9 = EFI x86 32/64; many use 9 for x86-64
-		bootfile = "netboot.xyz.efi"
-		if arch == 0x0000 {
-			// For BIOS clients, use the netboot.xyz iPXE chainloader
-			bootfile = "netboot.xyz.kpxe"
-		}
+		bootfile = bootfileForArch(arch)
 	}
 
 	mac := net.HardwareAddr(pkt.Chaddr[:pkt.HLen])

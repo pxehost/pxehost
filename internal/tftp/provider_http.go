@@ -5,14 +5,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"path"
 	"strings"
 	"time"
 )
 
 // HTTPProvider fetches bootfiles from an HTTP(S) base URL.
 type HTTPProvider struct {
-	Base string // e.g. https://boot.netboot.xyz/ipxe/
+	Base string // e.g. https://boot.ipxe.org/
 }
 
 // NewHTTPProvider constructs an HTTPProvider with the given base URL.
@@ -28,7 +27,7 @@ func (p *HTTPProvider) GetBootfile(filename string) (io.ReadCloser, int64, error
 	if p == nil || p.Base == "" {
 		return nil, 0, fmt.Errorf("http provider: missing base URL")
 	}
-	name := path.Base(strings.TrimLeft(filename, "/\\"))
+	name := strings.TrimLeft(filename, "/\\")
 	url := p.Base + name
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)

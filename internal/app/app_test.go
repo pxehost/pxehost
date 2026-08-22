@@ -49,7 +49,7 @@ func (p *mappedProvider) GetBootfile(filename string) (io.ReadCloser, int64, err
 // and performs a manual TFTP transfer (two RRQs with ACKs) verifying bytes.
 func TestReplayAndTFTP(t *testing.T) {
 	// Bootfile used for TFTP manual transfer: random bytes of a given length.
-	const reqName = "netboot.xyz.kpxe"
+	const reqName = "undionly.kpxe"
 	const randomLen = 4097 // spans multiple 512B blocks to exercise TFTP
 	provider := &mappedProvider{}
 	want, err := provider.AddRandom(reqName, randomLen)
@@ -124,7 +124,7 @@ func TestReplayAndTFTP(t *testing.T) {
 	pkt.WithVendorClassIdent("PXEClient:Arch:00000:UNDI:002001")
 
 	reply := SendPacketAndRead(t, c, dhcpRaddr, pkt)
-	assertPXEReplyLike(t, reply, dhcp.DHCPOffer, "netboot.xyz.kpxe")
+	assertPXEReplyLike(t, reply, dhcp.DHCPOffer, "undionly.kpxe")
 
 	// DHCP Request exchange
 	pkt = dhcp.NewPacket(1, 0x4e0e64de, net.HardwareAddr{0x18, 0xc0, 0x4d, 0x0e, 0x64, 0xde})
@@ -141,7 +141,7 @@ func TestReplayAndTFTP(t *testing.T) {
 	pkt.WithVendorClassIdent("PXEClient:Arch:00000:UNDI:002001")
 
 	reply = SendPacketAndRead(t, c, dhcpRaddr, pkt)
-	assertPXEReplyLike(t, reply, dhcp.DHCPAck, "netboot.xyz.kpxe")
+	assertPXEReplyLike(t, reply, dhcp.DHCPAck, "undionly.kpxe")
 
 	// 2nd DHCP Request exchange on PXE port
 	pkt = dhcp.NewPacket(1, 0x4e0e64de, net.HardwareAddr{0x18, 0xc0, 0x4d, 0x0e, 0x64, 0xde})
@@ -156,7 +156,7 @@ func TestReplayAndTFTP(t *testing.T) {
 	pkt.WithVendorClassIdent("PXEClient:Arch:00000:UNDI:002001")
 
 	reply = SendPacketAndRead(t, c, pxeRaddr, pkt)
-	assertPXEReplyLike(t, reply, dhcp.DHCPAck, "netboot.xyz.kpxe")
+	assertPXEReplyLike(t, reply, dhcp.DHCPAck, "undionly.kpxe")
 
 	// Manual TFTP transfer
 	client, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: 0})

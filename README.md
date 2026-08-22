@@ -4,8 +4,7 @@
 
 `pxehost` is a no-configuration, Go-stdlib-only, rootless PXE server.
 
-It lets you boot a PC over LAN into the [netboot.xyz](https://github.com/netbootxyz/netboot.xyz)
-menu.
+It lets you boot a PC over LAN into the [iPXE](https://ipxe.org/) menu.
 
 **This is the easiest way to install Linux.**
 
@@ -72,13 +71,9 @@ DHCP options which tell pxehost what type of file to use.
 The PXE firmware sees the DHCP options that `pxehost` sends, and uses
 the TFTP protocol to get the boot file.
 
-TFTP is a UDP-based file transfer protocol. `pxehost` downloads the
-boot file from https://netboot.xyz and forwards the file via TFTP to
-the boot loader.
+TFTP is a UDP-based file transfer protocol. `pxehost` downloads an
+architecture-appropriate iPXE image from https://boot.ipxe.org and forwards it
+to the boot loader. EFI clients receive iPXE's `ipxe-legacy.efi` variant, which
+preserves USB keyboard support.
 
-The netboot.xyz boot file is a small iPXE blob. It supports HTTPS.
-It loads another blob for the netboot.xyz menu.
-
-The netboot.xyz menu has tons of Linux installers, Live CDs, and other
-OS's. It downloads and runs the OS files automatically (`pxehost` is not
-involved at that point anymore)
+The iPXE image supports HTTPS and then loads the netboot.xyz menu.

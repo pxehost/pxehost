@@ -15,17 +15,12 @@ import (
 	"github.com/pxehost/pxehost/internal/capture"
 )
 
-// Minimal TFTP server that proxies RRQ (read) requests by fetching the
-// requested filename from an upstream base URL (e.g. https://boot.netboot.xyz/ipxe/)
-// and streaming it to the client using standard 512-byte TFTP blocks.
+// TFTP is a simple UDP file transfer protocol. For the purposes of PXE boot,
+// we need to serve only a few files via TFTP:
+// - The .kpxe or .efi iPXE binary
+// - A script for iPXE, autoexec.ipxe, which runs before we load netboot.xyz
 //
-// It supports:
-// - RRQ in mode "octet"
-// - Optional OACK for tsize/blksize (blksize fixed to 512)
-// - Retries with simple timeouts
-//
-// This is intentionally small and purpose-built for serving the initial iPXE
-// binaries; it is not a full TFTP implementation.
+// This TFTP server only supports read requests.
 
 type Server struct {
 	Provider BootfileProvider
@@ -148,10 +143,6 @@ var localVarsIPXE = []byte(`#!ipxe
 `)
 
 func (s *Server) getBootfile(filename string) (io.ReadCloser, int64, error) {
-	// Obtain bootfile from netboot
-	if strings.HasPrefix(filename, "netboot") {
-		return s.Provider.GetBootfile(filename)
-	}
 	if filename == "autoexec.ipxe" {
 		return io.NopCloser(bytes.NewReader(autoexecIPXE)), int64(len(autoexecIPXE)), nil
 	}
@@ -159,7 +150,7 @@ func (s *Server) getBootfile(filename string) (io.ReadCloser, int64, error) {
 		// Return empty script as default for others
 		return io.NopCloser(bytes.NewReader(localVarsIPXE)), int64(len(localVarsIPXE)), nil
 	}
-	return nil, 0, fmt.Errorf("file %s not found", filename)
+	return s.Provider.GetBootfile(filename)
 }
 
 func (s *Server) handleRRQ(req *ReadReq, client *net.UDPAddr) {
