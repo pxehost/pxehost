@@ -155,7 +155,11 @@ func (s *Server) getBootfile(filename string) (io.ReadCloser, int64, error) {
 		// Return empty script as default for others
 		return io.NopCloser(bytes.NewReader(localVarsIPXE)), int64(len(localVarsIPXE)), nil
 	}
-	return s.Provider.GetBootfile(filename)
+	body, size, err := s.Provider.GetBootfile(filename)
+	if err != nil {
+		return nil, 0, fmt.Errorf("get bootfile %q: %w", filename, err)
+	}
+	return body, size, nil
 }
 
 func (s *Server) handleRRQ(req *ReadReq, client *net.UDPAddr) {
