@@ -24,12 +24,14 @@ Since `pxehost` does not need root, it will refuse to run as root.
 - **On Linux**, `pxehost` needs the `CAP_NET_BIND_SERVICE` capability to bind
 ports 67 and 69. You can run `pxehost` with that cap using `systemd-run`:
 ```bash
-sudo systemd-run \
-  --property User=$USER \
+systemd-run \
+  --property DynamicUser=true \
   --property AmbientCapabilities=CAP_NET_BIND_SERVICE \
   --pty \
   ./pxehost
 ```
+
+  On machines with SELinux (like Fedora), you might have to change the role of the binary to allow the execution. This can be done by invoking `chcon -t bin_t ./pxehost`.
 - **On Windows**, you may get a firewall prompt and need to allow pxehost to run.
 - **On macOS** (Mojave or newer) it will just work.
 
